@@ -10,7 +10,7 @@ In any project's `.devcontainer/devcontainer.json`:
 {
   "image": "mcr.microsoft.com/devcontainers/base:debian",
   "features": {
-    "ghcr.io/scottrigby/showtape/showtape:0.2.1": {}
+    "ghcr.io/scottrigby/showtape/showtape:0.3.0": {}
   }
 }
 ```
@@ -26,7 +26,7 @@ Feature options (set in `devcontainer.json`):
 
 | Option | Default | Effect |
 |---|---|---|
-| `version` | `main` | Git ref of `scottrigby/showtape` to install — branch (`main`), tag (`v0.2.1`), or commit. Pin to a tag for reproducible builds. |
+| `version` | `main` | Git ref of `scottrigby/showtape` to install — branch (`main`), tag (`v0.3.0`), or commit. Pin to a tag for reproducible builds. |
 | `voiceModel` | `en_US-libritts_r-medium` | Piper voice to pre-fetch. Empty string disables. |
 | `installChromium` | `true` | Install Playwright's Chromium + system deps. Set false for terminal-only demos. |
 
