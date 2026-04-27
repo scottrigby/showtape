@@ -1,0 +1,138 @@
+title: multi-layout-showcase
+resolution: { w: 1920, h: 1080 }
+voice: 0
+
+# Showcases all four pane counts (1, 2, 3, 4) and the four 3-pane layouts.
+# `id` is optional — when omitted the recorder uses step{index}.
+
+steps:
+  # 1 pane: full-screen browser
+  - narration: "Sometimes a demo just needs a single browser, full screen."
+    panes:
+      - type: browser
+        actions:
+          - goto: "https://github.com/rhasspy/piper"
+          - scroll: { y: 400 }
+
+  # 1 pane: full-screen terminal
+  - narration: "Other times, just a terminal."
+    panes:
+      - type: terminal
+        actions:
+          - type: "# Single-pane terminal"
+          - enter: true
+          - sleep_ms: 500
+          - type: "uname -a"
+          - enter: true
+          - sleep_ms: 1500
+
+  # 2 panes: classic side-by-side
+  - narration: "Most often you want both, side by side."
+    pause_ms: 250
+    panes:
+      - type: browser
+        actions:
+          - goto: "https://huggingface.co/rhasspy/piper-voices"
+      - type: terminal
+        actions:
+          - type: "ls -lh"
+          - enter: true
+          - sleep_ms: 1500
+
+  # 3 panes, layout 3-left: big browser left, two stacked terminals right
+  - id: three-left
+    narration: "Three panes — big pane on the left, two stacked on the right."
+    layout: 3-left
+    panes:
+      - type: browser
+        actions:
+          - goto: "https://github.com/charmbracelet/vhs"
+      - type: terminal
+        actions:
+          - type: "vhs --version"
+          - enter: true
+          - sleep_ms: 1200
+      - type: terminal
+        actions:
+          - type: "ttyd --version | head -1"
+          - enter: true
+          - sleep_ms: 1200
+
+  # 3 panes, layout 3-right: same content, big pane swings to the right
+  - id: three-right
+    narration: "Or flipped — big pane on the right."
+    layout: 3-right
+    panes:
+      - type: browser
+        actions:
+          - goto: "https://github.com/microsoft/playwright"
+      - type: terminal
+        actions:
+          - type: "ps -o pid,comm | head -3"
+          - enter: true
+          - sleep_ms: 1200
+      - type: terminal
+        actions:
+          - type: "df -h / | head -2"
+          - enter: true
+          - sleep_ms: 1200
+
+  # 3 panes, layout 3-top: header browser on top, two terminals below
+  - id: three-top
+    narration: "Top header, two below."
+    layout: 3-top
+    panes:
+      - type: browser
+        actions:
+          - goto: "https://github.com/rhasspy/piper"
+      - type: terminal
+        actions:
+          - type: "uptime"
+          - enter: true
+          - sleep_ms: 1200
+      - type: terminal
+        actions:
+          - type: "free -h | head -2"
+          - enter: true
+          - sleep_ms: 1200
+
+  # 3 panes, layout 3-bottom: two terminals on top, browser footer below
+  - id: three-bottom
+    narration: "Or two on top, one below."
+    layout: 3-bottom
+    panes:
+      - type: browser
+        actions:
+          - goto: "https://huggingface.co/rhasspy/piper-voices"
+      - type: terminal
+        actions:
+          - type: "echo 'pane B'"
+          - enter: true
+          - sleep_ms: 1200
+      - type: terminal
+        actions:
+          - type: "echo 'pane C'"
+          - enter: true
+          - sleep_ms: 1200
+
+  # 4 panes: 2x2 grid
+  - id: four-grid
+    narration: "And for complex flows, a four pane grid."
+    pause_ms: 500
+    panes:
+      - type: browser
+        actions:
+          - goto: "https://github.com/rhasspy/piper"
+      - type: browser
+        actions:
+          - goto: "https://huggingface.co"
+      - type: terminal
+        actions:
+          - type: "echo 'bottom left'"
+          - enter: true
+          - sleep_ms: 1200
+      - type: terminal
+        actions:
+          - type: "echo 'bottom right'"
+          - enter: true
+          - sleep_ms: 1200

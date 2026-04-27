@@ -5,60 +5,72 @@ voice: 0
 steps:
   - id: intro
     narration: "Welcome! Let me show you Piper, an open source text to speech engine."
-    browser:
-      goto: "https://github.com/rhasspy/piper"
-    terminal:
-      - type: "# Open-source TTS demo"
-      - enter: true
-      - sleep_ms: 600
-      - type: "uname -srm"
-      - enter: true
-      - sleep_ms: 1500
+    panes:
+      - type: browser
+        actions:
+          - goto: "https://github.com/rhasspy/piper"
+      - type: terminal
+        actions:
+          - type: "# Open-source TTS demo"
+          - enter: true
+          - sleep_ms: 600
+          - type: "uname -srm"
+          - enter: true
+          - sleep_ms: 1500
 
   - id: voices
     narration: "Piper ships with hundreds of voices, all hosted on Hugging Face."
-    browser:
-      goto: "https://huggingface.co/rhasspy/piper-voices"
-    terminal:
-      - type: "# Voices catalog"
-      - enter: true
-      - sleep_ms: 600
-      - type: "echo 'libritts, ljspeech, lessac, kathleen ...'"
-      - enter: true
-      - sleep_ms: 1500
+    panes:
+      - type: browser
+        actions:
+          - goto: "https://huggingface.co/rhasspy/piper-voices"
+      - type: terminal
+        actions:
+          - type: "# Voices catalog"
+          - enter: true
+          - sleep_ms: 600
+          - type: "echo 'libritts, ljspeech, lessac, kathleen ...'"
+          - enter: true
+          - sleep_ms: 1500
 
   - id: install
     narration: "Installation is one pip command. No API keys, no cloud account."
-    browser:
-      goto: "https://github.com/rhasspy/piper#installation"
-    terminal:
-      - type: "pip --version"
-      - enter: true
-      - sleep_ms: 1200
-      - type: "# pip install piper-tts"
-      - enter: true
-      - sleep_ms: 1200
+    panes:
+      - type: browser
+        actions:
+          - goto: "https://github.com/rhasspy/piper#installation"
+      - type: terminal
+        actions:
+          - type: "pip --version"
+          - enter: true
+          - sleep_ms: 1200
+          - type: "# pip install piper-tts"
+          - enter: true
+          - sleep_ms: 1200
 
   - id: synthesize
     narration: "Synthesizing speech takes a single command. Pipe text in, get audio out."
-    browser:
-      goto: "https://huggingface.co/rhasspy/piper-voices/tree/main/en/en_US"
-    terminal:
-      - type: "echo 'Hello, world!' > input.txt"
-      - enter: true
-      - sleep_ms: 500
-      - type: "cat input.txt"
-      - enter: true
-      - sleep_ms: 1500
+    panes:
+      - type: browser
+        actions:
+          - goto: "https://huggingface.co/rhasspy/piper-voices/tree/main/en/en_US"
+      - type: terminal
+        actions:
+          - type: "echo 'Hello, world!' | head"
+          - enter: true
+          - sleep_ms: 1500
 
   - id: outro
     narration: "Open source, fast, and running entirely on your own hardware. That's Piper."
-    browser:
-      goto: "https://github.com/rhasspy/piper"
-    terminal:
-      - type: "# Demo complete"
-      - enter: true
-      - sleep_ms: 500
-      - type: "date"
-      - enter: true
-      - sleep_ms: 1500
+    panes:
+      - type: browser
+        actions:
+          - goto: "https://github.com/rhasspy/piper"
+      - type: terminal
+        actions:
+          - type: "# Demo complete"
+          - enter: true
+          - sleep_ms: 500
+          - type: "date"
+          - enter: true
+          - sleep_ms: 1500
