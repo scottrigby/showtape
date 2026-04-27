@@ -90,5 +90,9 @@ if [ -n "${VOICEMODEL}" ]; then
     echo "showtape: WARN — voice pre-fetch failed; users can fetch later with \`showtape fetch-voice\`" >&2
 fi
 
-echo "showtape: install complete."
+# ---- Sanity-check installed binaries ----
+echo "showtape: install complete. Versions:"
 showtape --version
+vhs --version
+ttyd --version | head -1
+ffmpeg -version | head -1

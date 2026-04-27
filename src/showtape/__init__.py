@@ -5,4 +5,9 @@ Playwright, terminal via VHS) composed by FFmpeg, with TTS narration
 from Piper.
 """
 
-__version__ = "0.2.0"
+from importlib.metadata import PackageNotFoundError, version
+
+try:
+    __version__ = version("showtape")
+except PackageNotFoundError:  # not installed (e.g. running from a source tree)
+    __version__ = "0+unknown"

@@ -1,0 +1,62 @@
+name: Release on version bump
+
+# Triggers when a commit on main changes the version in pyproject.toml or the
+# feature manifest. CI verifies the two files agree, tags the commit, and
+# publishes the OCI feature to ghcr.io. No GitHub Release is created yet —
+# the git tag is the canonical release marker until we have a reason to
+# write release notes (see README → Contributing → Cutting a release).
+# If the version hasn't actually changed (e.g., a docs-only edit to the file),
+# the workflow detects the existing tag and exits as a no-op.
+on:
+  push:
+    branches: [main]
+    paths:
+      - pyproject.toml
+      - feature/showtape/devcontainer-feature.json
+  workflow_dispatch:        # allow manual re-runs from the Actions tab
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write       # for `git push <tag>`
+      packages: write       # ghcr.io
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0    # need tags so we can detect "already released"
+
+      - name: Resolve and verify version
+        id: ver
+        run: |
+          set -euo pipefail
+          PY=$(grep -E '^version = ' pyproject.toml   | head -1 | cut -d'"' -f2)
+          FEAT=$(jq -r '.version' feature/showtape/devcontainer-feature.json)
+          echo "pyproject=$PY  feature.json=$FEAT"
+          if [ "$PY" != "$FEAT" ]; then
+            echo "::error::pyproject.toml ($PY) ≠ feature.json ($FEAT). Run scripts/bump-version.sh to sync."
+            exit 1
+          fi
+          if git rev-parse "v$PY" >/dev/null 2>&1; then
+            echo "v$PY tag already exists — skipping release."
+            echo "release=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "version=$PY" >> "$GITHUB_OUTPUT"
+            echo "release=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Tag the commit
+        if: steps.ver.outputs.release == 'true'
+        run: |
+          git config user.name  'github-actions[bot]'
+          git config user.email 'github-actions[bot]@users.noreply.github.com'
+          git tag "v${{ steps.ver.outputs.version }}"
+          git push origin "v${{ steps.ver.outputs.version }}"
+
+      - name: Publish devcontainer feature → ghcr.io
+        if: steps.ver.outputs.release == 'true'
+        uses: devcontainers/action@v1
+        with:
+          publish-features: "true"
+          base-path-to-features: "./feature"
+          features-namespace: scottrigby/showtape

@@ -1,0 +1,27 @@
+// Development container for the showtape repo itself. Eats our own dog
+// food: pulls the published feature for system deps (Playwright, VHS,
+// ttyd, FFmpeg, voice), then `pip install -e .` replaces the from-git
+// showtape install with the live source under src/.
+//
+// Open this folder in VS Code with the Dev Containers extension, or:
+//   devcontainer up --workspace-folder .
+//   devcontainer exec --workspace-folder . showtape render demos/example.yaml
+{
+  "name": "showtape dev",
+  "image": "mcr.microsoft.com/devcontainers/base:debian",
+
+  "features": {
+    // Pin to a release tag for reproducible dev environments.
+    "ghcr.io/scottrigby/showtape/showtape:0.2.1": {}
+  },
+
+  // Persist Playwright's browser cache across container rebuilds.
+  // Path matches the feature's containerEnv.PLAYWRIGHT_BROWSERS_PATH.
+  "mounts": [
+    "source=showtape-dev-playwright,target=/usr/local/share/playwright,type=volume"
+  ],
+
+  // After the feature pip-installs showtape from main, replace it with the
+  // live source so edits in src/ take effect without reinstalling.
+  "postCreateCommand": "pip install -e . --force-reinstall --no-deps && showtape --version"
+}

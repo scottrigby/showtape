@@ -10,12 +10,10 @@ In any project's `.devcontainer/devcontainer.json`:
 {
   "image": "mcr.microsoft.com/devcontainers/base:debian",
   "features": {
-    "ghcr.io/scottrigby/showtape/showtape:0.2.0": {}
+    "ghcr.io/scottrigby/showtape/showtape:0.2.1": {}
   }
 }
 ```
-
-(The duplicated `showtape/showtape` is GHCR's convention for single-feature repos: `<owner>/<repo>/<feature-id>`. Tag options: `:0.2.0` exact, `:0.2`/`:0` floating, `:latest` always newest. The `:1` major-version tag will only exist once a 1.x.y release is published.)
 
 That installs everything (Playwright + Chromium, FFmpeg, VHS, ttyd, the `showtape` CLI, and a default Piper voice). Then in your project:
 
@@ -28,7 +26,7 @@ Feature options (set in `devcontainer.json`):
 
 | Option | Default | Effect |
 |---|---|---|
-| `version` | `main` | Git ref of `scottrigby/showtape` to install — branch (`main`), tag (`v0.2.0`), or commit. Pin to a tag for reproducible builds. |
+| `version` | `main` | Git ref of `scottrigby/showtape` to install — branch (`main`), tag (`v0.2.1`), or commit. Pin to a tag for reproducible builds. |
 | `voiceModel` | `en_US-libritts_r-medium` | Piper voice to pre-fetch. Empty string disables. |
 | `installChromium` | `true` | Install Playwright's Chromium + system deps. Set false for terminal-only demos. |
 
@@ -80,7 +78,7 @@ Step duration = `max(narration, all action estimates) + pause_ms`. Each pane str
 
 **Browser sessions** persist cookies / localStorage across steps within a render — `session: gmail` in step 2 and again in step 5 stays logged in. JavaScript-memory state (unsubmitted form values, open modals) does *not* persist; only what the page itself writes to cookies/storage.
 
-**Pronunciations** are a top-level YAML map applied as whole-word, case-insensitive substitutions before Piper synthesises each step's narration. Use plain respellings (`Kubernetes: "kuber-NETT-eez"`) for most cases, or espeak's inline IPA syntax (`GitHub: "[[g'It_hVb]]"`) when respelling doesn't sound right. The map is per-demo (lives in the YAML); promote frequently-used words to a shared file and merge yourself if you author many demos sharing the same vocabulary.
+**Pronunciations** are a top-level YAML map applied as whole-word, case-insensitive substitutions before Piper synthesises each step's narration. Use plain respellings (`Kubernetes: "kuber-NETT-eez"`) for most cases, or espeak's inline IPA syntax (`GitHub: "[[g'It_hVb]]"`) when respelling doesn't sound right.
 
 ## CLI
 
@@ -92,30 +90,38 @@ showtape --version
 
 `render` defaults are cwd-relative: output to `./out/<stem>.mp4`, scratch in `./.showtape-work/`, voice model looked up under `./voices/`, then `/usr/local/share/showtape/voices/`, then `~/.cache/showtape/voices/`.
 
-## Local development on showtape itself
+## Contributing
+
+The repo eats its own dog food: opening it in a devcontainer-aware editor (VS Code Dev Containers extension, JetBrains Gateway, `devcontainer-cli`) builds a dev environment via the showtape feature itself, then `pip install -e .` overrides the from-git install with the live source.
 
 ```bash
 git clone https://github.com/scottrigby/showtape && cd showtape
-bash setup.sh                          # editable pip install + binaries
-showtape fetch-voice en_US-libritts_r-medium
-showtape render demos/example.yaml     # smoke test
+# In VS Code: "Reopen in Container" — or:
+devcontainer up --workspace-folder .
+devcontainer exec --workspace-folder . showtape fetch-voice en_US-libritts_r-medium
+devcontainer exec --workspace-folder . showtape render demos/example.yaml
 ```
 
-## Repo layout
+### Cutting a release
 
+The Python package version (`pyproject.toml`) and the feature artifact version (`feature/showtape/devcontainer-feature.json`) must agree. `scripts/bump-version.sh` keeps them in sync; CI (`.github/workflows/release.yaml`) does everything else when a version-bump commit lands on `main`.
+
+```bash
+./scripts/bump-version.sh 0.3.0
+git diff                                # sanity-check
+git commit -am "Bump to v0.3.0"
+git push origin main                    # CI tags v0.3.0 + publishes OCI feature + creates GitHub Release
 ```
-pyproject.toml            Package metadata + console_scripts entry
-src/showtape/             Python package
-  cli.py                  argparse subcommands (render, fetch-voice)
-  recorder.py             Render pipeline (YAML → MP4)
-feature/                  Devcontainer feature
-  devcontainer-feature.json
-  install.sh              Runs at build time as root; installs the rest
-demos/                    Example YAMLs
-voices/                   Piper voice models (gitignored)
-out/                      Generated MP4s (gitignored)
-.showtape-work/           Per-step intermediate artifacts (gitignored)
-setup.sh                  Dev convenience: pip install -e . + binaries
-claudeman-profile.json    Claudeman dev profile for working on showtape itself
-.claude/claudeman/profiles/showtape.json → ../../../claudeman-profile.json
-```
+
+What CI does on each push to `main` that touches `pyproject.toml` or the feature manifest:
+1. Asserts that `pyproject.toml` and `feature/showtape/devcontainer-feature.json` versions agree.
+2. If a `v<version>` tag doesn't already exist, creates it on that commit and pushes.
+3. Publishes the OCI feature to `ghcr.io/scottrigby/showtape/showtape:<version>` (plus floating `:0.x`, `:0`, `:latest`).
+
+The git tag is the canonical release marker — there's no GitHub Release yet (deliberately, while the project is in 0.x and changing fast). When a release warrants written notes, add a `softprops/action-gh-release` step to the workflow.
+
+If the two version files disagree, the workflow fails loudly — fix the files (or re-run `bump-version.sh`) and push again. The version-tag check is idempotent: pushing a no-op commit on `main` won't double-publish.
+
+## Architecture & repo layout
+
+See [ARCHITECTURE.md](./ARCHITECTURE.md).
