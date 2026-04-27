@@ -3,7 +3,6 @@
   "description": "Open-source product demo recorder: Playwright + Piper TTS + VHS + FFmpeg",
   "features": {
     "ghcr.io/devcontainers/features/python:1": { "version": "latest" },
-    "ghcr.io/schlich/devcontainer-features/playwright:0": { "browsers": "chromium" },
     "ghcr.io/devcontainers-extra/features/ffmpeg-apt-get:1": {}
   },
   "extraDomains": [

@@ -1,23 +1,35 @@
 #!/usr/bin/env bash
 # One-time setup for the demo-recorder POC.
-# Installs anything that the claudeman profile features don't already cover:
+# The claudeman profile provides Python + FFmpeg; everything else is here:
 #   - ttyd + dejavu fonts (apt) for VHS rendering
+#   - Chromium runtime libs (apt) — Playwright Python's bundled driver needs them
 #   - VHS binary from GitHub releases
 #   - Python deps (piper-tts, playwright, pyyaml)
-#   - Playwright Chromium browser (skipped if the playwright feature already did it)
+#   - Playwright Chromium browser binary
+#
+# Note: we install Chromium deps via apt directly rather than using the
+# `schlich/playwright` devcontainer feature. That feature pulls in
+# `devcontainers/features/node`, which collides with NPM_CONFIG_PREFIX
+# pre-set by Anthropic's upstream devcontainer image (nvm refuses to install).
+# Playwright's Python binding ships its own Node driver, so we don't need
+# system Node at all.
 set -euo pipefail
 
 cd "$(dirname "$0")"
 
-echo "==> apt deps (ttyd, fonts)"
+echo "==> apt deps (ttyd, fonts, Chromium runtime libs)"
 sudo apt-get update
-sudo apt-get install -y ttyd fonts-dejavu
+sudo apt-get install -y \
+  ttyd fonts-dejavu \
+  libnss3 libatk1.0-0 libatk-bridge2.0-0 libcups2 libdrm2 \
+  libxkbcommon0 libxcomposite1 libxdamage1 libxfixes3 libxrandr2 \
+  libgbm1 libpango-1.0-0 libcairo2 libasound2
 
 echo "==> Python deps"
 pip install -r requirements.txt
 
-echo "==> Playwright Chromium"
-playwright install chromium || true
+echo "==> Playwright Chromium browser"
+playwright install chromium
 
 ARCH="$(uname -m)"
 case "$ARCH" in
