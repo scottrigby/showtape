@@ -341,6 +341,39 @@ def estimate_terminal_ms(actions):
     return total + 500
 
 
+# Common Unicode characters that the shell readline mis-interprets when sent
+# as multi-byte UTF-8. We auto-replace these in `type:`/`paste:` action
+# strings so demo authors don't have to remember the rule. (AI-written
+# content especially loves smart quotes and em dashes.) Narration text is
+# unaffected — that goes through Piper, not the shell.
+_UNICODE_TO_ASCII = {
+    "—": "-",      # — em dash → hyphen-minus
+    "–": "-",      # – en dash → hyphen-minus
+    "‘": "'",      # ' left single → straight apostrophe
+    "’": "'",      # ' right single → straight apostrophe
+    "“": '"',      # " left double → straight double quote
+    "”": '"',      # " right double → straight double quote
+    "…": "...",    # … ellipsis → three dots
+    " ": " ",      # non-breaking space → regular space
+    "­": "",       # soft hyphen → strip
+    "•": "*",      # • bullet → asterisk
+}
+
+
+def _to_shell_safe_ascii(s: str) -> str:
+    """Convert known-problematic Unicode characters to ASCII equivalents.
+
+    Sent through the type:/paste: → VHS → ttyd → bash readline pipeline,
+    multi-byte UTF-8 sequences sometimes get partially interpreted as
+    command-line edit operations (transposing words, killing the line).
+    Pre-substituting the common offenders makes demos copy-pastable from
+    AI-generated content without a foot-gun.
+    """
+    for src, dst in _UNICODE_TO_ASCII.items():
+        s = s.replace(src, dst)
+    return s
+
+
 def _emit_terminal_actions(actions):
     """Translate a sequence of YAML terminal actions into VHS tape lines.
 
@@ -353,10 +386,12 @@ def _emit_terminal_actions(actions):
     used_ms = 0
     for a in actions or []:
         if "type" in a:
-            lines.append(vhs_type_line(a["type"]))
-            used_ms += len(a["type"]) * DEFAULT_TYPING_SPEED_MS
+            text = _to_shell_safe_ascii(a["type"])
+            lines.append(vhs_type_line(text))
+            used_ms += len(text) * DEFAULT_TYPING_SPEED_MS
         if "paste" in a:
-            chunks = _paste_chunks(a["paste"])
+            text = _to_shell_safe_ascii(a["paste"])
+            chunks = _paste_chunks(text)
             lines.append("Set TypingSpeed 1ms")
             for k, chunk in enumerate(chunks):
                 lines.append(vhs_type_line(chunk))
@@ -490,19 +525,41 @@ def _compile_session_tape_for_dim(occurrences, output_mp4, dims):
     return "\n".join(lines) + "\n", offsets
 
 
-def _slice_session_video(session_mp4, start_ms, duration_ms, output_mp4):
-    """ffmpeg-trim a slice from a session MP4, re-encoding for clean cuts."""
+def _measure_video_duration_ms(mp4_path):
+    """Read a video's actual duration in milliseconds via ffprobe."""
+    result = subprocess.run([
+        "ffprobe", "-v", "error", "-show_entries", "format=duration",
+        "-of", "default=nw=1:nk=1", str(mp4_path)
+    ], capture_output=True, text=True, check=True)
+    return int(float(result.stdout.strip()) * 1000)
+
+
+def _slice_session_video(session_mp4, start_ms, source_dur_ms, target_dur_ms, output_mp4):
+    """Extract source_dur_ms starting at start_ms; pad to target_dur_ms with the
+    frozen last frame if needed.
+
+    VHS often renders typing slightly faster than the 50 ms/char our estimator
+    assumes, so the actual session MP4 is shorter than the scripted total.
+    Caller passes scaled (start_ms, source_dur_ms) for the actual content slice;
+    target_dur_ms is the step's scripted duration. tpad freezes the last frame
+    to bridge any shortfall, keeping the slice's visible duration consistent
+    with the rest of the composite.
+    """
     output_mp4.parent.mkdir(parents=True, exist_ok=True)
-    subprocess.run([
+    pad_s = max(0, (target_dur_ms - source_dur_ms) / 1000)
+    cmd = [
         "ffmpeg", "-y",
         "-ss", f"{start_ms / 1000}",
+        "-t", f"{source_dur_ms / 1000}",
         "-i", str(session_mp4),
-        "-t", f"{duration_ms / 1000}",
         "-c:v", "libx264", "-preset", "veryfast", "-crf", "22",
         "-pix_fmt", "yuv420p", "-r", str(FPS),
         "-an",
-        str(output_mp4),
-    ], check=True, capture_output=True)
+    ]
+    if pad_s > 0.01:
+        cmd.extend(["-vf", f"tpad=stop_mode=clone:stop_duration={pad_s:.3f}"])
+    cmd.append(str(output_mp4))
+    subprocess.run(cmd, check=True, capture_output=True)
     return output_mp4
 
 
@@ -634,13 +691,24 @@ def render(yaml_path, out=None, work_dir=None, voice_model=None, keep_work=False
             suffix = f"_{dims[0]}x{dims[1]}" if len(unique_dims) > 1 else ""
             tape_path = sess_dir / f"{sid}{suffix}.tape"
             mp4_path = (sess_dir / f"{sid}{suffix}.mp4").resolve()
-            tape_text, offsets = _compile_session_tape_for_dim(occs, mp4_path, dims)
+            tape_text, scripted_offsets = _compile_session_tape_for_dim(occs, mp4_path, dims)
             tape_path.write_text(tape_text)
             subprocess.run(["vhs", str(tape_path)], check=True)
-            session_videos[(sid, dims)] = (
-                mp4_path,
-                {step_idx: (start_ms, dur_ms) for step_idx, start_ms, dur_ms in offsets},
-            )
+
+            # VHS renders slightly faster than our 50 ms/char estimate (per-char
+            # frame overhead, exact Sleep semantics). Scale the scripted offsets
+            # to actual MP4 time so per-step slices land in the right segment
+            # and don't bleed into the next.
+            scripted_total_ms = sum(target_ms for _, _, target_ms in scripted_offsets) + 1000
+            actual_total_ms = _measure_video_duration_ms(mp4_path)
+            scale = actual_total_ms / scripted_total_ms
+            actual_offsets = {
+                step_idx: (int(start_ms * scale), int(dur_ms * scale))
+                for step_idx, start_ms, dur_ms in scripted_offsets
+            }
+            print(f"  {dims[0]}x{dims[1]}: scripted={scripted_total_ms}ms "
+                  f"actual={actual_total_ms}ms scale={scale:.4f}")
+            session_videos[(sid, dims)] = (mp4_path, actual_offsets)
 
     # ---- Pass 3: render browser panes, slice session videos, composite ----
     clip_paths = []
@@ -661,10 +729,10 @@ def render(yaml_path, out=None, work_dir=None, voice_model=None, keep_work=False
             elif t == "terminal" and "session" in pane:
                 sid_term = pane["session"]
                 session_mp4, offset_map = session_videos[(sid_term, dims)]
-                start_ms, duration_ms = offset_map[i]
+                start_ms, source_dur_ms = offset_map[i]   # scaled to actual MP4 time
                 v = work / "panes" / f"{i}-{j}-term-slice.mp4"
-                _slice_session_video(session_mp4, start_ms, duration_ms, v)
-                sess_label = f" session={sid_term} (sliced from {start_ms}ms @ {dims[0]}x{dims[1]})"
+                _slice_session_video(session_mp4, start_ms, source_dur_ms, step_ms, v)
+                sess_label = f" session={sid_term} (sliced from {start_ms}ms, src={source_dur_ms}ms→pad to {step_ms}ms @ {dims[0]}x{dims[1]})"
             else:
                 v = record_terminal_pane(pane, step_ms, dims,
                                          work / "panes", f"{i}-{j}-term")
