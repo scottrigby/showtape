@@ -7,7 +7,15 @@
 # Generated artifacts
 out/
 work/
+.showtape-work/
 
-# Voice models (78 MB+, fetch separately)
+# Python build / dist
+__pycache__/
+*.egg-info/
+*.pyc
+build/
+dist/
+
+# Voice models (~80 MB each — fetch via `showtape fetch-voice`)
 voices/*.onnx
 voices/*.onnx.json

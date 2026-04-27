@@ -1,6 +1,6 @@
 {
-  "name": "demo-recorder",
-  "description": "Open-source product demo recorder: Playwright + Piper TTS + VHS + FFmpeg",
+  "name": "showtape",
+  "description": "Showtape — multi-pane in-container demo recorder. Dev profile for working on the showtape source itself; consumer projects should add the published devcontainer feature instead.",
   "features": {
     "ghcr.io/devcontainers/features/python:1": { "version": "latest" },
     "ghcr.io/devcontainers-extra/features/ffmpeg-apt-get:1": {},

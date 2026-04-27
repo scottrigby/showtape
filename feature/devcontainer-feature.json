@@ -1,0 +1,33 @@
+{
+  "id": "showtape",
+  "version": "0.1.0",
+  "name": "Showtape",
+  "documentationURL": "https://github.com/scottrigby/showtape",
+  "description": "Multi-pane in-container demo recorder. Installs the `showtape` CLI plus its system dependencies (Playwright/Chromium, VHS, ttyd, FFmpeg, Piper) so any project's devcontainer can render narrated demo MP4s from a YAML spec.",
+  "options": {
+    "version": {
+      "type": "string",
+      "default": "main",
+      "description": "Git ref of scottrigby/showtape to install (branch, tag, or commit)."
+    },
+    "voiceModel": {
+      "type": "string",
+      "default": "en_US-libritts_r-medium",
+      "description": "Piper voice to pre-fetch into /usr/local/share/showtape/voices/. Empty string disables pre-fetch."
+    },
+    "installChromium": {
+      "type": "boolean",
+      "default": true,
+      "description": "Install Playwright's bundled Chromium and its apt-level system deps. Disable to keep the image small if you only intend to use terminal panes."
+    }
+  },
+  "dependsOn": {
+    "ghcr.io/devcontainers/features/python:1": {
+      "version": "latest"
+    },
+    "ghcr.io/devcontainers-extra/features/ffmpeg-apt-get:1": {},
+    "ghcr.io/devcontainers-extra/features/apt-packages:1": {
+      "packages": "fonts-dejavu,libnss3,libatk1.0-0,libatk-bridge2.0-0,libcups2,libdrm2,libxkbcommon0,libxcomposite1,libxdamage1,libxfixes3,libxrandr2,libgbm1,libpango-1.0-0,libcairo2,libasound2"
+    }
+  }
+}

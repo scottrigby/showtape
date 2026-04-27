@@ -1,0 +1,34 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "showtape"
+version = "0.1.0"
+description = "Multi-pane in-container demo recorder: declarative YAML → narrated MP4"
+readme = "README.md"
+requires-python = ">=3.10"
+license = "MIT"
+authors = [{ name = "Scott Rigby", email = "scottr@replicated.com" }]
+keywords = ["demo", "recording", "screencast", "playwright", "tts", "vhs"]
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "License :: OSI Approved :: MIT License",
+  "Programming Language :: Python :: 3",
+  "Topic :: Multimedia :: Video :: Capture",
+]
+dependencies = [
+  "piper-tts>=1.0",
+  "playwright>=1.40",
+  "pyyaml>=6.0",
+]
+
+[project.scripts]
+showtape = "showtape.cli:main"
+
+[project.urls]
+Homepage = "https://github.com/scottrigby/showtape"
+Issues = "https://github.com/scottrigby/showtape/issues"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/showtape"]

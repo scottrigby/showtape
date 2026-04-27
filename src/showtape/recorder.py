@@ -1,12 +1,17 @@
-#!/usr/bin/env python3
-"""Record a multi-pane product demo (browser + terminal panes + TTS narration) to MP4.
+"""Core rendering pipeline: YAML demo spec → narrated multi-pane MP4.
 
-Reads a YAML demo spec, generates per-step assets (Piper narration WAV, one video
-per pane via Playwright or VHS), composites the panes into a layout (1-4 panes,
-with named 3-pane variants), and concatenates the per-step clips into a single MP4.
+Public surface for callers:
+    render(yaml_path, out=None, work_dir=None, voice_model=None) -> Path
+
+Reads a YAML demo spec, generates per-step assets (Piper narration WAV, one
+video per pane via Playwright or VHS), composites the panes into a layout
+(1–4 panes, with named 3-pane variants), and concatenates the per-step
+clips into a single MP4.
 """
 
-import argparse
+from __future__ import annotations
+
+import os
 import shutil
 import subprocess
 import sys
@@ -19,6 +24,7 @@ from piper.voice import PiperVoice
 from playwright.sync_api import sync_playwright
 
 FPS = 30
+DEFAULT_VOICE_MODEL_NAME = "en_US-libritts_r-medium"
 
 # Per-action duration estimates (ms). Used to size the step before running it.
 # If a real action takes longer, the recording extends past the estimate; if
@@ -31,8 +37,51 @@ BROWSER_ACTION_ESTIMATES = {
 LAYOUTS_3 = ("3-left", "3-right", "3-top", "3-bottom")
 
 # Cookie / localStorage persistence keyed by browser session id. Survives
-# across steps within one run; reset on process exit.
+# across steps within one render call; reset each call.
 _session_storage: dict[str, dict] = {}
+
+
+# ---------- Voice model resolution ----------
+
+def voice_model_search_paths():
+    """Lookup chain for Piper voice models (most specific to most general)."""
+    return [
+        Path.cwd() / "voices",
+        Path("/usr/local/share/showtape/voices"),
+        Path.home() / ".cache" / "showtape" / "voices",
+    ]
+
+
+def resolve_voice_model(voice_model: str | None) -> Path:
+    """Resolve a voice model spec to an absolute path.
+
+    Accepts:
+      - None         → DEFAULT_VOICE_MODEL_NAME, looked up in search paths
+      - bare name    → looked up in search paths
+      - relative path → resolved against cwd
+      - absolute path → used as-is
+    """
+    if voice_model is None:
+        voice_model = DEFAULT_VOICE_MODEL_NAME
+    p = Path(voice_model)
+    if p.is_absolute() and p.exists():
+        return p
+    if p.is_absolute():
+        raise FileNotFoundError(f"voice model not found at {p}")
+    # Treat as bare name first; fall back to relative path.
+    name = p.name if p.suffix == ".onnx" else f"{voice_model}.onnx"
+    for base in voice_model_search_paths():
+        candidate = base / name
+        if candidate.exists():
+            return candidate
+    # Last resort: maybe it's a relative path the caller meant literally.
+    if p.exists():
+        return p.resolve()
+    searched = "\n  ".join(str(b) for b in voice_model_search_paths())
+    raise FileNotFoundError(
+        f"voice model {voice_model!r} not found. Searched:\n  {searched}\n"
+        f"Run `showtape fetch-voice {DEFAULT_VOICE_MODEL_NAME}` to install."
+    )
 
 
 # ---------- TTS ----------
@@ -302,33 +351,31 @@ def concat_clips(clip_paths, out_path, work_dir):
     ], check=True)
 
 
-# ---------- Main ----------
+# ---------- Public API ----------
 
-def main():
-    parser = argparse.ArgumentParser()
-    parser.add_argument("yaml_path")
-    parser.add_argument("--out", default=None,
-                        help="Output MP4. Defaults to /workspace/out/<yaml-stem>.mp4")
-    parser.add_argument("--work", default="/workspace/work")
-    parser.add_argument("--voice-model",
-                        default="/workspace/voices/en_US-libritts_r-medium.onnx")
-    parser.add_argument("--keep-work", action="store_true")
-    args = parser.parse_args()
+def render(yaml_path, out=None, work_dir=None, voice_model=None, keep_work=False):
+    """Render a demo YAML to MP4. Paths default to cwd-relative.
 
-    yaml_path = Path(args.yaml_path)
+    Returns the absolute path of the produced MP4.
+    """
+    yaml_path = Path(yaml_path).resolve()
     spec = yaml.safe_load(yaml_path.read_text())
     res = spec.get("resolution", {"w": 1920, "h": 1080})
     output_w, output_h = res["w"], res["h"]
     default_voice = spec.get("voice", 0)
 
-    out_path = Path(args.out or f"/workspace/out/{yaml_path.stem}.mp4")
-    work = Path(args.work)
-    if work.exists() and not args.keep_work:
+    out_path = Path(out or Path.cwd() / "out" / f"{yaml_path.stem}.mp4").resolve()
+    work = Path(work_dir or Path.cwd() / ".showtape-work").resolve()
+    if work.exists() and not keep_work:
         shutil.rmtree(work)
     work.mkdir(parents=True, exist_ok=True)
 
-    print(f"Loading Piper voice from {args.voice_model}...")
-    voice = PiperVoice.load(args.voice_model)
+    voice_path = resolve_voice_model(voice_model)
+    print(f"Loading Piper voice from {voice_path}...")
+    voice = PiperVoice.load(str(voice_path))
+
+    # Reset session storage per-render.
+    _session_storage.clear()
 
     clip_paths = []
     for i, step in enumerate(spec["steps"]):
@@ -346,7 +393,6 @@ def main():
         print(f"\n=== [{i}] {sid} ({n} pane{'s' if n > 1 else ''}{', ' + layout if layout else ''}) ===")
         print(f"  narration: {narration[:60]!r}{'...' if len(narration) > 60 else ''}")
 
-        # Synth (or silence)
         narration_wav = work / "audio" / f"{i}.wav"
         if narration:
             synth(voice, narration, default_voice, narration_wav)
@@ -354,7 +400,6 @@ def main():
         else:
             narration_ms = 0
 
-        # Per-pane duration estimates → step duration
         estimates = []
         for pane in panes:
             t = pane.get("type")
@@ -370,7 +415,6 @@ def main():
         if not narration:
             silent_wav(narration_wav, step_ms)
 
-        # Record each pane
         dims_list = pane_dimensions(n, output_w, output_h, layout)
         pane_videos = []
         for j, (pane, dims) in enumerate(zip(panes, dims_list)):
@@ -385,7 +429,6 @@ def main():
             sess = f" session={pane.get('session', 'default')}" if t == "browser" else ""
             print(f"  pane[{j}] {t}{sess} {dims} → {v.name}")
 
-        # Composite
         clip_path = work / "clips" / f"{i}.mp4"
         composite_step(pane_videos, narration_wav, clip_path, step_ms, n, layout,
                        output_w, output_h)
@@ -402,7 +445,4 @@ def main():
     )
     print(probe.stdout)
     print(f"✅ {out_path}")
-
-
-if __name__ == "__main__":
-    main()
+    return out_path
