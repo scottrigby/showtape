@@ -1,35 +1,27 @@
 #!/usr/bin/env bash
-# One-time setup for the demo-recorder POC.
-# The claudeman profile provides Python + FFmpeg; everything else is here:
-#   - ttyd + dejavu fonts (apt) for VHS rendering
-#   - Chromium runtime libs (apt) — Playwright Python's bundled driver needs them
-#   - VHS binary from GitHub releases
+# One-time setup for the demo-recorder POC, runs as the unprivileged user.
+# The claudeman profile handles all apt installs via devcontainer features
+# (Python, FFmpeg, ttyd, DejaVu fonts, and Chromium runtime libs). The
+# Anthropic upstream image doesn't grant the user passwordless sudo, so
+# anything system-wide must come through a feature, not this script.
+#
+# This script installs the rest in user space:
+#   - VHS binary (single Go binary, dropped into a writable PATH dir)
 #   - Python deps (piper-tts, playwright, pyyaml)
 #   - Playwright Chromium browser binary
-#
-# Note: we install Chromium deps via apt directly rather than using the
-# `schlich/playwright` devcontainer feature. That feature pulls in
-# `devcontainers/features/node`, which collides with NPM_CONFIG_PREFIX
-# pre-set by Anthropic's upstream devcontainer image (nvm refuses to install).
-# Playwright's Python binding ships its own Node driver, so we don't need
-# system Node at all.
 set -euo pipefail
 
 cd "$(dirname "$0")"
-
-echo "==> apt deps (ttyd, fonts, Chromium runtime libs)"
-sudo apt-get update
-sudo apt-get install -y \
-  ttyd fonts-dejavu \
-  libnss3 libatk1.0-0 libatk-bridge2.0-0 libcups2 libdrm2 \
-  libxkbcommon0 libxcomposite1 libxdamage1 libxfixes3 libxrandr2 \
-  libgbm1 libpango-1.0-0 libcairo2 libasound2
 
 echo "==> Python deps"
 pip install -r requirements.txt
 
 echo "==> Playwright Chromium browser"
 playwright install chromium
+
+# /usr/local/python/current/bin is provided by the python devcontainer feature,
+# is on PATH, and is writable by our user — perfect spot for a user-installed binary.
+BIN_DIR="/usr/local/python/current/bin"
 
 ARCH="$(uname -m)"
 case "$ARCH" in
@@ -39,11 +31,11 @@ case "$ARCH" in
 esac
 
 if ! command -v vhs >/dev/null 2>&1; then
-  echo "==> Installing VHS (Linux $VHS_ARCH)"
+  echo "==> Installing VHS (Linux $VHS_ARCH) → $BIN_DIR/vhs"
   TMPDIR="$(mktemp -d)"
   curl -fsSL "https://github.com/charmbracelet/vhs/releases/latest/download/vhs_Linux_${VHS_ARCH}.tar.gz" \
     | tar xz -C "$TMPDIR"
-  sudo install -m0755 "$TMPDIR"/vhs*/vhs /usr/local/bin/vhs
+  install -m0755 "$TMPDIR"/vhs*/vhs "$BIN_DIR/vhs"
   rm -rf "$TMPDIR"
 fi
 
