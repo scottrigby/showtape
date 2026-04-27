@@ -10,12 +10,12 @@ In any project's `.devcontainer/devcontainer.json`:
 {
   "image": "mcr.microsoft.com/devcontainers/base:debian",
   "features": {
-    "ghcr.io/scottrigby/showtape/showtape:0.1.0": {}
+    "ghcr.io/scottrigby/showtape/showtape:0.2.0": {}
   }
 }
 ```
 
-(The duplicated `showtape/showtape` is GHCR's convention for single-feature repos: `<owner>/<repo>/<feature-id>`. Tag options: `:0.1.0` exact, `:0.1`/`:0` floating, `:latest` always newest. The `:1` major-version tag will only exist once a 1.x.y release is published.)
+(The duplicated `showtape/showtape` is GHCR's convention for single-feature repos: `<owner>/<repo>/<feature-id>`. Tag options: `:0.2.0` exact, `:0.2`/`:0` floating, `:latest` always newest. The `:1` major-version tag will only exist once a 1.x.y release is published.)
 
 That installs everything (Playwright + Chromium, FFmpeg, VHS, ttyd, the `showtape` CLI, and a default Piper voice). Then in your project:
 
@@ -28,7 +28,7 @@ Feature options (set in `devcontainer.json`):
 
 | Option | Default | Effect |
 |---|---|---|
-| `version` | `main` | Git ref of `scottrigby/showtape` to install. |
+| `version` | `main` | Git ref of `scottrigby/showtape` to install — branch (`main`), tag (`v0.2.0`), or commit. Pin to a tag for reproducible builds. |
 | `voiceModel` | `en_US-libritts_r-medium` | Piper voice to pre-fetch. Empty string disables. |
 | `installChromium` | `true` | Install Playwright's Chromium + system deps. Set false for terminal-only demos. |
 
@@ -40,6 +40,12 @@ The feature `dependsOn` `python`, `ffmpeg-apt-get`, and `apt-packages` (with the
 title: my-feature-walkthrough
 resolution: { w: 1920, h: 1080 }
 voice: 0    # Piper speaker id
+
+pronunciations:                       # optional — applied to every step's narration
+  Kubernetes: "kuber-NETT-eez"        # whole-word, case-insensitive substitution
+  k8s: "kates"                        # respellings
+  showtape: "show tape"               # add a syllable break
+  GitHub: "[[g'It_hVb]]"              # or espeak inline IPA when respelling falls short
 
 steps:
   - narration: "Open the dashboard."
@@ -73,6 +79,8 @@ Layouts come from pane count:
 Step duration = `max(narration, all action estimates) + pause_ms`. Each pane stretches to fill the step.
 
 **Browser sessions** persist cookies / localStorage across steps within a render — `session: gmail` in step 2 and again in step 5 stays logged in. JavaScript-memory state (unsubmitted form values, open modals) does *not* persist; only what the page itself writes to cookies/storage.
+
+**Pronunciations** are a top-level YAML map applied as whole-word, case-insensitive substitutions before Piper synthesises each step's narration. Use plain respellings (`Kubernetes: "kuber-NETT-eez"`) for most cases, or espeak's inline IPA syntax (`GitHub: "[[g'It_hVb]]"`) when respelling doesn't sound right. The map is per-demo (lives in the YAML); promote frequently-used words to a shared file and merge yourself if you author many demos sharing the same vocabulary.
 
 ## CLI
 

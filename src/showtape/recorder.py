@@ -12,6 +12,7 @@ clips into a single MP4.
 from __future__ import annotations
 
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -85,6 +86,28 @@ def resolve_voice_model(voice_model: str | None) -> Path:
 
 
 # ---------- TTS ----------
+
+def apply_pronunciations(text: str, pronunciations: dict | None) -> str:
+    """Substitute words in `text` with per-project respellings before synthesis.
+
+    Match is whole-word (regex \\b) and case-insensitive; the *replacement*
+    is taken verbatim from the map. Longer keys win when one is a prefix of
+    another (handled by sorting). Empty/None map → text returned unchanged.
+
+    Example:
+        apply_pronunciations("Deploy showtape today", {"showtape": "show tape"})
+        → "Deploy show tape today"
+    """
+    if not pronunciations:
+        return text
+    items = sorted(pronunciations.items(), key=lambda kv: -len(kv[0]))
+    lookup = {k.lower(): v for k, v in items}
+    pattern = re.compile(
+        r"\b(" + "|".join(re.escape(k) for k, _ in items) + r")\b",
+        re.IGNORECASE,
+    )
+    return pattern.sub(lambda m: lookup[m.group(0).lower()], text)
+
 
 def synth(voice, text, speaker_id, out_path):
     out_path.parent.mkdir(parents=True, exist_ok=True)
@@ -363,6 +386,7 @@ def render(yaml_path, out=None, work_dir=None, voice_model=None, keep_work=False
     res = spec.get("resolution", {"w": 1920, "h": 1080})
     output_w, output_h = res["w"], res["h"]
     default_voice = spec.get("voice", 0)
+    pronunciations = spec.get("pronunciations") or {}
 
     out_path = Path(out or Path.cwd() / "out" / f"{yaml_path.stem}.mp4").resolve()
     work = Path(work_dir or Path.cwd() / ".showtape-work").resolve()
@@ -395,7 +419,10 @@ def render(yaml_path, out=None, work_dir=None, voice_model=None, keep_work=False
 
         narration_wav = work / "audio" / f"{i}.wav"
         if narration:
-            synth(voice, narration, default_voice, narration_wav)
+            spoken = apply_pronunciations(narration, pronunciations)
+            if spoken != narration:
+                print(f"  pronunciations applied: {spoken[:60]!r}{'...' if len(spoken) > 60 else ''}")
+            synth(voice, spoken, default_voice, narration_wav)
             narration_ms = wav_duration_ms(narration_wav)
         else:
             narration_ms = 0

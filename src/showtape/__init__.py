@@ -5,4 +5,4 @@ Playwright, terminal via VHS) composed by FFmpeg, with TTS narration
 from Piper.
 """
 
-__version__ = "0.1.0"
+__version__ = "0.2.0"
