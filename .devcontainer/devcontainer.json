@@ -15,10 +15,12 @@
     "ghcr.io/scottrigby/showtape/showtape:0.3.0": {}
   },
 
-  // Persist Playwright's browser cache across container rebuilds.
-  // Path matches the feature's containerEnv.PLAYWRIGHT_BROWSERS_PATH.
+  // Persist large, version-stable downloads across container rebuilds.
+  // Both volumes are write-once-read-many: same Chromium / voice across
+  // any showtape version sharing the same Playwright/voice file.
   "mounts": [
-    "source=showtape-dev-playwright,target=/usr/local/share/playwright,type=volume"
+    "source=showtape-dev-playwright,target=/usr/local/share/playwright,type=volume",
+    "source=showtape-dev-voices,target=/usr/local/share/showtape/voices,type=volume"
   ],
 
   // After the feature pip-installs showtape from main, replace it with the

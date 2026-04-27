@@ -32,6 +32,17 @@ Feature options (set in `devcontainer.json`):
 
 The feature `dependsOn` `python`, `ffmpeg-apt-get`, and `apt-packages` (with the right Chromium runtime libs already filled in), so you don't need to list those yourself.
 
+**Optional — persist large downloads across rebuilds.** The Chromium browser binary (~200 MB) and Piper voice models (~80 MB each) are version-stable, identical across consumers, and worth caching outside the build layer. Add named volumes to your devcontainer.json so they survive container rebuilds (and are shared across any other project on the same host that uses showtape):
+
+```jsonc
+"mounts": [
+  "source=showtape-playwright,target=/usr/local/share/playwright,type=volume",
+  "source=showtape-voices,target=/usr/local/share/showtape/voices,type=volume"
+]
+```
+
+These are pure binary caches — nothing project-specific writes to either path. The smaller binaries (VHS, ttyd, the showtape Python package itself) are handled by Docker's image layer cache and don't need volumes.
+
 ## YAML schema
 
 ```yaml
