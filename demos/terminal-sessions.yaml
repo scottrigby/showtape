@@ -13,8 +13,8 @@ voice: 0
 # wrapped scrollback.
 
 pronunciations:
-  shell-A: "shell ay"     # avoid Piper merging the hyphen into one mushy syllable
-  shell-B: "shell bee"
+  shell-A: "shell A"      # space gives Piper a beat to articulate the letter
+  shell-B: "shell B"
 
 steps:
   - id: shell-A-first
@@ -83,6 +83,6 @@ steps:
       - type: terminal
         session: shell-A      # 1920x1080 — DIFFERENT dim, second VHS render
         actions:
-          - type: "echo 'shell-A: command 3 — bigger now'"
+          - type: "echo 'shell-A: command 3 - bigger now'"
           - enter: true
           - sleep_ms: 1500

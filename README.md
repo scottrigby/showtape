@@ -10,7 +10,7 @@ In any project's `.devcontainer/devcontainer.json`:
 {
   "image": "mcr.microsoft.com/devcontainers/base:debian",
   "features": {
-    "ghcr.io/scottrigby/showtape/showtape:0.6.0": {}
+    "ghcr.io/scottrigby/showtape/showtape:0.6.1": {}
   }
 }
 ```
@@ -26,7 +26,7 @@ Feature options (set in `devcontainer.json`):
 
 | Option | Default | Effect |
 |---|---|---|
-| `version` | `main` | Git ref of `scottrigby/showtape` to install — branch (`main`), tag (`v0.6.0`), or commit. Pin to a tag for reproducible builds. |
+| `version` | `main` | Git ref of `scottrigby/showtape` to install — branch (`main`), tag (`v0.6.1`), or commit. Pin to a tag for reproducible builds. |
 | `voiceModel` | `en_US-libritts_r-medium` | Piper voice to pre-fetch. Empty string disables. |
 | `installChromium` | `true` | Install Playwright's Chromium + system deps. Set false for terminal-only demos. |
 
@@ -77,7 +77,7 @@ steps:
           - paste: |                                # near-instant, multi-line
               helm upgrade --install my-app chart/ \
                 -n staging \
-                --set image.tag=v0.6.0
+                --set image.tag=v0.6.1
               kubectl -n staging get pods
           - sleep_ms: 60000                         # let the actual command run
 ```
@@ -100,6 +100,8 @@ Step duration = `max(narration, all action estimates) + pause_ms`. Each pane str
 **Pronunciations** are a top-level YAML map applied as whole-word, case-insensitive substitutions before Piper synthesises each step's narration. Use plain respellings (`Kubernetes: "kuber-NETT-eez"`) for most cases, or espeak's inline IPA syntax (`GitHub: "[[g'It_hVb]]"`) when respelling doesn't sound right.
 
 **Terminal actions: `type:` vs `paste:`.** `type:` emits one character at a time (50 ms each — VHS default), giving the natural live-typing feel for short commands. `paste:` emits everything near-instantly, the way a paste from clipboard reads in a real terminal. Use it for long commands that would otherwise spend 10+ seconds typing letter-by-letter. `paste:` accepts multi-line YAML (with `|` literal block style) and treats each line as a separate command — backslash continuations work because bash reassembles them on its own.
+
+**Stick to ASCII in `type:`/`paste:` action strings.** Smart quotes, em dashes (`—`), and other Unicode punctuation are sent through VHS → ttyd → bash readline as multi-byte UTF-8 sequences, and at least some byte values get interpreted by readline as command-line edit operations (transposing words, killing the line, etc.). Use plain `-` instead of `—`, plain `'`/`"` instead of curly quotes. Narration text (which goes through Piper, not the shell) is fine with any Unicode.
 
 ## CLI
 
@@ -130,8 +132,8 @@ The version is pinned in four places: `pyproject.toml`, `feature/showtape/devcon
 ```bash
 ./scripts/bump-version.sh 0.3.0         # bumps + audits in one shot
 git diff                                # sanity-check
-git commit -am "Bump to v0.6.0"
-git push origin main                    # CI tags v0.6.0 + publishes OCI feature
+git commit -am "Bump to v0.6.1"
+git push origin main                    # CI tags v0.6.1 + publishes OCI feature
 ```
 
 What CI does on each push to `main` that touches `pyproject.toml` or the feature manifest:
