@@ -10,12 +10,12 @@ In any project's `.devcontainer/devcontainer.json`:
 {
   "image": "mcr.microsoft.com/devcontainers/base:debian",
   "features": {
-    "ghcr.io/scottrigby/showtape/showtape:1": {}
+    "ghcr.io/scottrigby/showtape/showtape:0.1.0": {}
   }
 }
 ```
 
-(The duplicated `showtape/showtape` is GHCR's convention for single-feature repos: `<owner>/<repo>/<feature-id>`. Pin to `:0.1.0` for reproducible builds; `:1` floats with the latest 1.x.)
+(The duplicated `showtape/showtape` is GHCR's convention for single-feature repos: `<owner>/<repo>/<feature-id>`. Tag options: `:0.1.0` exact, `:0.1`/`:0` floating, `:latest` always newest. The `:1` major-version tag will only exist once a 1.x.y release is published.)
 
 That installs everything (Playwright + Chromium, FFmpeg, VHS, ttyd, the `showtape` CLI, and a default Piper voice). Then in your project:
 
