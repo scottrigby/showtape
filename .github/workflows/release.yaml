@@ -50,6 +50,18 @@ jobs:
           git tag "v${{ steps.ver.outputs.version }}"
           git push origin "v${{ steps.ver.outputs.version }}"
 
+      # devcontainers/action runs `devcontainer features publish`, which expects
+      # credentials in the runner's docker config. It does NOT auto-login to
+      # ghcr.io itself — without this step the publish hits ghcr.io with no
+      # auth header and the registry returns 401 UNAUTHORIZED.
+      - name: Log in to ghcr.io
+        if: steps.ver.outputs.release == 'true'
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
       - name: Publish devcontainer feature → ghcr.io
         if: steps.ver.outputs.release == 'true'
         uses: devcontainers/action@v1
