@@ -67,6 +67,10 @@ jobs:
           publish-features: "true"
           base-path-to-features: "./feature"
           features-namespace: scottrigby/showtape
+          # Skip the action's auto `feature_<id>_<version>` git tag — we
+          # already tag the commit as `v<version>` in the next step, and
+          # one canonical release tag is cleaner.
+          disable-repo-tagging: "true"
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
