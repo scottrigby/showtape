@@ -50,9 +50,17 @@ if ! command -v vhs >/dev/null 2>&1; then
 fi
 
 # ---- ttyd (used internally by VHS) ----
+# tsl0922/ttyd publishes releases without marking any as "latest", so the
+# /releases/latest/download/... shortcut returns 404. Resolve the most
+# recent non-prerelease tag from the API, then build the explicit URL.
 if ! command -v ttyd >/dev/null 2>&1; then
-  echo "showtape: installing ttyd (${TTYD_ARCH}) → ${PYTHON_BIN}/ttyd"
-  curl -fsSL "https://github.com/tsl0922/ttyd/releases/latest/download/ttyd.${TTYD_ARCH}" \
+  TTYD_TAG="$(curl -fsSL https://api.github.com/repos/tsl0922/ttyd/releases \
+    | python3 -c 'import json,sys
+for r in json.load(sys.stdin):
+    if not r["prerelease"] and not r["draft"]:
+        print(r["tag_name"]); break')"
+  echo "showtape: installing ttyd ${TTYD_TAG} (${TTYD_ARCH}) → ${PYTHON_BIN}/ttyd"
+  curl -fsSL "https://github.com/tsl0922/ttyd/releases/download/${TTYD_TAG}/ttyd.${TTYD_ARCH}" \
     -o "${PYTHON_BIN}/ttyd"
   chmod +x "${PYTHON_BIN}/ttyd"
 fi
