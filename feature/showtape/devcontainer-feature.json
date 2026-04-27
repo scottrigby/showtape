@@ -1,6 +1,6 @@
 {
   "id": "showtape",
-  "version": "0.4.1",
+  "version": "0.5.0",
   "name": "Showtape",
   "documentationURL": "https://github.com/scottrigby/showtape",
   "description": "Multi-pane in-container demo recorder. Installs the `showtape` CLI plus its system dependencies (Playwright/Chromium, VHS, ttyd, FFmpeg, Piper) so any project's devcontainer can render narrated demo MP4s from a YAML spec.",

@@ -330,6 +330,39 @@ def estimate_terminal_ms(actions):
     return total + 500
 
 
+def _emit_terminal_actions(actions):
+    """Translate a sequence of YAML terminal actions into VHS tape lines.
+
+    Returns (lines, used_ms). Doesn't include tape header (Output, Set Width,
+    Set TypingSpeed, etc.) or trailing Sleep padding — caller wraps it. This
+    is the reusable bit that's shared between per-step tapes (compile_tape)
+    and cross-step session tapes (_compile_session_tape).
+    """
+    lines = []
+    used_ms = 0
+    for a in actions or []:
+        if "type" in a:
+            lines.append(vhs_type_line(a["type"]))
+            used_ms += len(a["type"]) * DEFAULT_TYPING_SPEED_MS
+        if "paste" in a:
+            chunks = _paste_chunks(a["paste"])
+            lines.append("Set TypingSpeed 1ms")
+            for k, chunk in enumerate(chunks):
+                lines.append(vhs_type_line(chunk))
+                lines.append("Enter")
+                if k < len(chunks) - 1:
+                    lines.append("Sleep 300ms")
+            lines.append(f"Set TypingSpeed {DEFAULT_TYPING_SPEED_MS}ms")
+            used_ms += len(chunks) * PASTE_CHUNK_MS
+        if a.get("enter"):
+            lines.append("Enter")
+            used_ms += 100
+        if "sleep_ms" in a:
+            lines.append(f'Sleep {int(a["sleep_ms"])}ms')
+            used_ms += int(a["sleep_ms"])
+    return lines, used_ms
+
+
 def vhs_type_line(s: str) -> str:
     """Render a `Type ...` line for the given string.
 
@@ -351,8 +384,8 @@ def vhs_type_line(s: str) -> str:
     return f'Type "{s}"'
 
 
-def compile_tape(actions, target_ms, output_mp4, dims):
-    lines = [
+def _tape_header(output_mp4, dims):
+    return [
         f'Output "{output_mp4}"',
         f"Set Width {dims[0]}",
         f"Set Height {dims[1]}",
@@ -361,31 +394,13 @@ def compile_tape(actions, target_ms, output_mp4, dims):
         'Set Theme "Dracula"',
         "Set Padding 30",
     ]
-    used_ms = 0
-    for a in actions or []:
-        if "type" in a:
-            lines.append(vhs_type_line(a["type"]))
-            used_ms += len(a["type"]) * DEFAULT_TYPING_SPEED_MS
-        if "paste" in a:
-            # Switch to near-instant typing, emit each chunk + Enter, restore.
-            # Bash sees backslash-Enter as a continuation, so multi-line
-            # commands with trailing `\` reassemble correctly even though
-            # we Enter between every chunk.
-            chunks = _paste_chunks(a["paste"])
-            lines.append("Set TypingSpeed 1ms")
-            for i, chunk in enumerate(chunks):
-                lines.append(vhs_type_line(chunk))
-                lines.append("Enter")
-                if i < len(chunks) - 1:
-                    lines.append("Sleep 300ms")
-            lines.append(f"Set TypingSpeed {DEFAULT_TYPING_SPEED_MS}ms")
-            used_ms += len(chunks) * PASTE_CHUNK_MS
-        if a.get("enter"):
-            lines.append("Enter")
-            used_ms += 100
-        if "sleep_ms" in a:
-            lines.append(f'Sleep {int(a["sleep_ms"])}ms')
-            used_ms += int(a["sleep_ms"])
+
+
+def compile_tape(actions, target_ms, output_mp4, dims):
+    """Tape for a single per-step terminal pane (no session continuity)."""
+    lines = _tape_header(output_mp4, dims)
+    action_lines, used_ms = _emit_terminal_actions(actions)
+    lines.extend(action_lines)
     remaining = target_ms - used_ms
     if remaining > 0:
         lines.append(f"Sleep {remaining}ms")
@@ -399,6 +414,94 @@ def record_terminal_pane(pane, target_ms, dims, work_dir, key):
     tape_path.write_text(compile_tape(pane.get("actions", []), target_ms, out_path, dims))
     subprocess.run(["vhs", str(tape_path)], check=True)
     return out_path
+
+
+# ---------- Terminal sessions (continuity across steps) ----------
+#
+# A terminal pane with `session: <id>` joins a shared shell that persists
+# across every step using the same id. Implementation: build ONE tape per
+# session covering all its occurrences in step-order (no inter-step Sleep —
+# we only render time when the session is on screen), run VHS once, then
+# ffmpeg-trim per-step slices. The shell stays alive for the entire VHS run
+# so scrollback accumulates naturally.
+
+def _collect_terminal_sessions(step_plans):
+    """Return {session_id: [(step_idx, pane_idx, pane, dims, target_ms), ...]}.
+
+    Only includes panes that explicitly declare `session:`. Per-step terminals
+    without `session:` keep the original render_terminal_pane path.
+    """
+    sessions = {}
+    for plan in step_plans:
+        for j, (pane, dims) in enumerate(zip(plan["panes"], plan["dims_list"])):
+            if pane.get("type") == "terminal" and "session" in pane:
+                sid = pane["session"]
+                sessions.setdefault(sid, []).append(
+                    (plan["idx"], j, pane, dims, plan["step_ms"])
+                )
+    return sessions
+
+
+def _validate_session_dims(session_id, occurrences):
+    """All occurrences of one session must use the same pane dimensions.
+
+    Different widths cause different terminal line-wrap, which breaks the
+    illusion of continuous scrollback (text reflows differently between
+    slices). Force consistency at config time with a clear error rather
+    than producing a subtly-wrong demo.
+    """
+    distinct = sorted({occ[3] for occ in occurrences})
+    if len(distinct) > 1:
+        raise ValueError(
+            f"terminal session {session_id!r} appears at {len(distinct)} different "
+            f"pane sizes ({distinct}). Sessions must use the same dimensions across "
+            f"all steps so scrollback line-wrap stays consistent. Either use the "
+            f"same layout in every step that includes this session, or split into "
+            f"separate session ids per layout."
+        )
+
+
+def _compile_session_tape(occurrences, output_mp4):
+    """Build the tape for one session and the per-step time offsets.
+
+    Tape contains only the time slices when the session is on screen — no
+    inter-step Sleep filler — so the shell's accumulated scrollback at the
+    start of step N matches what was on screen at the end of step N-1's
+    occurrence. Returns (tape_text, [(step_idx, start_ms_in_tape, duration_ms), ...]).
+    """
+    dims = occurrences[0][3]
+    lines = _tape_header(output_mp4, dims)
+    offsets = []
+    cursor_ms = 0
+    for step_idx, _pane_idx, pane, _dims, target_ms in occurrences:
+        action_lines, used_ms = _emit_terminal_actions(pane.get("actions", []))
+        lines.extend(action_lines)
+        remaining = target_ms - used_ms
+        if remaining > 0:
+            lines.append(f"Sleep {remaining}ms")
+        offsets.append((step_idx, cursor_ms, target_ms))
+        cursor_ms += target_ms
+    # Trailing safety buffer — VHS occasionally drops a few frames off the very
+    # end of a tape, which would clip the last occurrence's slice. 1s of
+    # trailing Sleep guarantees the last slice has full requested duration.
+    lines.append("Sleep 1000ms")
+    return "\n".join(lines) + "\n", offsets
+
+
+def _slice_session_video(session_mp4, start_ms, duration_ms, output_mp4):
+    """ffmpeg-trim a slice from a session MP4, re-encoding for clean cuts."""
+    output_mp4.parent.mkdir(parents=True, exist_ok=True)
+    subprocess.run([
+        "ffmpeg", "-y",
+        "-ss", f"{start_ms / 1000}",
+        "-i", str(session_mp4),
+        "-t", f"{duration_ms / 1000}",
+        "-c:v", "libx264", "-preset", "veryfast", "-crf", "22",
+        "-pix_fmt", "yuv420p", "-r", str(FPS),
+        "-an",
+        str(output_mp4),
+    ], check=True, capture_output=True)
+    return output_mp4
 
 
 # ---------- Composite ----------
@@ -457,10 +560,15 @@ def render(yaml_path, out=None, work_dir=None, voice_model=None, keep_work=False
     print(f"Loading Piper voice from {voice_path}...")
     voice = PiperVoice.load(str(voice_path))
 
-    # Reset session storage per-render.
+    # Reset browser session storage per-render.
     _session_storage.clear()
 
-    clip_paths = []
+    # ---- Pass 1: plan every step (synth narration, compute durations, layout) ----
+    # Splitting this off lets us know all step durations BEFORE we render any
+    # cross-step terminal sessions, which need the per-step durations to
+    # build their tapes.
+    print("\n=== Planning steps (synth + duration estimates) ===")
+    step_plans = []
     for i, step in enumerate(spec["steps"]):
         sid = step.get("id", f"step{i}")
         narration = step.get("narration", "")
@@ -473,14 +581,9 @@ def render(yaml_path, out=None, work_dir=None, voice_model=None, keep_work=False
         if n == 3 and layout not in LAYOUTS_3:
             raise ValueError(f"step {sid}: 3-pane layout must be one of {LAYOUTS_3}, got {layout!r}")
 
-        print(f"\n=== [{i}] {sid} ({n} pane{'s' if n > 1 else ''}{', ' + layout if layout else ''}) ===")
-        print(f"  narration: {narration[:60]!r}{'...' if len(narration) > 60 else ''}")
-
         narration_wav = work / "audio" / f"{i}.wav"
         if narration:
             spoken = apply_pronunciations(narration, pronunciations)
-            if spoken != narration:
-                print(f"  pronunciations applied: {spoken[:60]!r}{'...' if len(spoken) > 60 else ''}")
             synth(voice, spoken, default_voice, narration_wav)
             narration_ms = wav_duration_ms(narration_wav)
         else:
@@ -496,24 +599,69 @@ def render(yaml_path, out=None, work_dir=None, voice_model=None, keep_work=False
             else:
                 raise ValueError(f"step {sid}: unknown pane type {t!r}")
         step_ms = max([narration_ms, *estimates]) + pause_ms
-        print(f"  narration={narration_ms}ms estimates={estimates} pause={pause_ms}ms → step={step_ms}ms")
 
         if not narration:
             silent_wav(narration_wav, step_ms)
 
         dims_list = pane_dimensions(n, output_w, output_h, layout)
+        plan = {
+            "idx": i, "step": step, "sid": sid, "panes": panes, "n": n,
+            "layout": layout, "step_ms": step_ms, "narration_ms": narration_ms,
+            "narration_wav": narration_wav, "dims_list": dims_list,
+        }
+        step_plans.append(plan)
+        layout_str = f", {layout}" if layout else ""
+        print(f"  [{i}] {sid} ({n} pane{'s' if n > 1 else ''}{layout_str}) "
+              f"narration={narration_ms}ms est={estimates} pause={pause_ms}ms → step={step_ms}ms")
+
+    # ---- Pass 2: render terminal session tapes (if any) ----
+    sessions = _collect_terminal_sessions(step_plans)
+    session_videos = {}    # session_id → (mp4_path, {step_idx: (start_ms, duration_ms)})
+    for sid, occs in sessions.items():
+        _validate_session_dims(sid, occs)
+        steps_str = ", ".join(str(o[0]) for o in occs)
+        print(f"\n=== Terminal session '{sid}' (steps {steps_str}, {occs[0][3]}) ===")
+        sess_dir = work / "sessions"
+        sess_dir.mkdir(parents=True, exist_ok=True)
+        tape_path = sess_dir / f"{sid}.tape"
+        mp4_path = (sess_dir / f"{sid}.mp4").resolve()
+        tape_text, offsets = _compile_session_tape(occs, mp4_path)
+        tape_path.write_text(tape_text)
+        subprocess.run(["vhs", str(tape_path)], check=True)
+        session_videos[sid] = (
+            mp4_path,
+            {step_idx: (start_ms, dur_ms) for step_idx, start_ms, dur_ms in offsets},
+        )
+
+    # ---- Pass 3: render browser panes, slice session videos, composite ----
+    clip_paths = []
+    for plan in step_plans:
+        i, sid, n, layout = plan["idx"], plan["sid"], plan["n"], plan["layout"]
+        step_ms, panes, dims_list = plan["step_ms"], plan["panes"], plan["dims_list"]
+        narration_wav = plan["narration_wav"]
+        layout_str = f", {layout}" if layout else ""
+        print(f"\n=== [{i}] {sid} ({n} pane{'s' if n > 1 else ''}{layout_str}) ===")
+
         pane_videos = []
         for j, (pane, dims) in enumerate(zip(panes, dims_list)):
             t = pane["type"]
             if t == "browser":
                 v = record_browser_pane(pane, step_ms, dims,
                                         work / "panes" / f"{i}-{j}-browser")
+                sess_label = f" session={pane.get('session', 'default')}"
+            elif t == "terminal" and "session" in pane:
+                sid_term = pane["session"]
+                session_mp4, offset_map = session_videos[sid_term]
+                start_ms, duration_ms = offset_map[i]
+                v = work / "panes" / f"{i}-{j}-term-slice.mp4"
+                _slice_session_video(session_mp4, start_ms, duration_ms, v)
+                sess_label = f" session={sid_term} (sliced from {start_ms}ms)"
             else:
                 v = record_terminal_pane(pane, step_ms, dims,
                                          work / "panes", f"{i}-{j}-term")
+                sess_label = ""
             pane_videos.append(v)
-            sess = f" session={pane.get('session', 'default')}" if t == "browser" else ""
-            print(f"  pane[{j}] {t}{sess} {dims} → {v.name}")
+            print(f"  pane[{j}] {t}{sess_label} {dims} → {v.name}")
 
         clip_path = work / "clips" / f"{i}.mp4"
         composite_step(pane_videos, narration_wav, clip_path, step_ms, n, layout,

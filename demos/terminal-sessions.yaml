@@ -1,0 +1,90 @@
+title: terminal-sessions-demo
+resolution: { w: 1920, h: 1080 }
+voice: 0
+
+# Demonstrates terminal `session:` continuity across non-contiguous steps.
+#
+# Two independent shells (`shell-A` and `shell-B`) run in parallel. Each
+# step keeps the same 3-pane layout (3-left: browser big-left, two small
+# terminals stacked right) so both sessions stay at the same dimensions
+# in every appearance — that's a hard requirement: re-rendering the same
+# session at different widths would re-wrap scrollback differently and
+# break the illusion of continuity. Mix layouts only at the cost of
+# losing visible scrollback.
+#
+# Sessions appear and disappear from the visible panes via "decoy" non-
+# session terminals: any step that drops a session uses a fresh shell
+# in that pane slot. The session stays alive between visits, accumulating
+# scrollback you can verify when it returns.
+
+steps:
+  - id: shell-A-first
+    narration: "Shell A starts up and runs a command."
+    layout: 3-left
+    panes:
+      - type: browser
+        actions:
+          - goto: "https://github.com/scottrigby/showtape"
+      - type: terminal
+        session: shell-A
+        actions:
+          - type: "echo 'shell-A: command 1'"
+          - enter: true
+          - sleep_ms: 1500
+      - type: terminal     # decoy — nothing yet from shell-B; just a fresh shell
+        actions:
+          - sleep_ms: 2000
+
+  - id: shell-A-continues
+    narration: "Shell A continues with another command. The first one's still on screen."
+    layout: 3-left
+    panes:
+      - type: browser
+        actions:
+          - goto: "https://huggingface.co/rhasspy/piper-voices"
+      - type: terminal
+        session: shell-A
+        actions:
+          - type: "echo 'shell-A: command 2'"
+          - enter: true
+          - sleep_ms: 1500
+      - type: terminal     # decoy again
+        actions:
+          - sleep_ms: 2000
+
+  - id: shell-B-starts
+    narration: "Now I'll switch focus to shell B, which has its own independent state."
+    layout: 3-left
+    panes:
+      - type: browser
+        actions:
+          - goto: "https://github.com/charmbracelet/vhs"
+      - type: terminal     # decoy in shell-A's slot — shell-A is paused, not visible
+        actions:
+          - sleep_ms: 2000
+      - type: terminal
+        session: shell-B
+        actions:
+          - type: "echo 'shell-B: command 1, totally separate'"
+          - enter: true
+          - sleep_ms: 1500
+
+  - id: both-back
+    narration: "And here are both shells side by side. A still has its history. B still has its."
+    layout: 3-left
+    panes:
+      - type: browser
+        actions:
+          - goto: "https://github.com/scottrigby/showtape"
+      - type: terminal
+        session: shell-A   # returns! commands 1 and 2 should still be visible
+        actions:
+          - type: "echo 'shell-A: command 3 — survived being absent'"
+          - enter: true
+          - sleep_ms: 1500
+      - type: terminal
+        session: shell-B   # continues from shell-B-starts
+        actions:
+          - type: "echo 'shell-B: command 2'"
+          - enter: true
+          - sleep_ms: 1500
