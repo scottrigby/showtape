@@ -10,7 +10,7 @@ In any project's `.devcontainer/devcontainer.json`:
 {
   "image": "mcr.microsoft.com/devcontainers/base:debian",
   "features": {
-    "ghcr.io/scottrigby/showtape/showtape:0.3.1": {}
+    "ghcr.io/scottrigby/showtape/showtape:0.3.2": {}
   }
 }
 ```
@@ -26,7 +26,7 @@ Feature options (set in `devcontainer.json`):
 
 | Option | Default | Effect |
 |---|---|---|
-| `version` | `main` | Git ref of `scottrigby/showtape` to install — branch (`main`), tag (`v0.3.1`), or commit. Pin to a tag for reproducible builds. |
+| `version` | `main` | Git ref of `scottrigby/showtape` to install — branch (`main`), tag (`v0.3.2`), or commit. Pin to a tag for reproducible builds. |
 | `voiceModel` | `en_US-libritts_r-medium` | Piper voice to pre-fetch. Empty string disables. |
 | `installChromium` | `true` | Install Playwright's Chromium + system deps. Set false for terminal-only demos. |
 
@@ -120,8 +120,8 @@ The version is pinned in four places: `pyproject.toml`, `feature/showtape/devcon
 ```bash
 ./scripts/bump-version.sh 0.3.0         # bumps + audits in one shot
 git diff                                # sanity-check
-git commit -am "Bump to v0.3.1"
-git push origin main                    # CI tags v0.3.1 + publishes OCI feature
+git commit -am "Bump to v0.3.2"
+git push origin main                    # CI tags v0.3.2 + publishes OCI feature
 ```
 
 What CI does on each push to `main` that touches `pyproject.toml` or the feature manifest:

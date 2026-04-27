@@ -12,7 +12,7 @@
 
   "features": {
     // Pin to a release tag for reproducible dev environments.
-    "ghcr.io/scottrigby/showtape/showtape:0.3.1": {}
+    "ghcr.io/scottrigby/showtape/showtape:0.3.2": {}
   },
 
   // Persist large, version-stable downloads across container rebuilds.
