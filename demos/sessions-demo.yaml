@@ -2,67 +2,102 @@ title: sessions-demo
 resolution: { w: 1920, h: 1080 }
 speaker: 0
 
-# Demonstrates four session features in one demo:
-#   - terminal session continuity (scrollback survives across steps)
-#   - cross-session copy/paste via capture: / paste_from:
-#   - browser session navigation across steps (same session, different URLs)
-#   - a session appearing at two viewport sizes (split-screen then full-screen)
+# Demonstrates cross-pane and cross-step session features:
+#   1. Terminal capture + cross-step paste (capture in step 1, reuse in step 3)
+#   2. Silent paste into read -s (secret never echoed to screen)
+#   3. Browser capture from DOM → paste into terminal
+#   4. Terminal capture → paste into browser form field
+#
+# Note: a `sleep_ms:` before `capture:` is required so the command
+# has time to finish before the pane content is snapshotted.
 
 pronunciations:
   showtape: "show tape"
 
 steps:
-  - id: generate-tag
-    narration: "Shell A generates a build tag. The capture action stores it so any session can use it later."
+  - id: generate-token
+    narration: "Shell A generates an auth token and captures it. Shell B is live but idle."
     layout: 3-left
     panes:
       - type: browser
-        session: docs
+        session: web
         actions:
           - goto: "https://github.com/scottrigby/showtape"
       - type: terminal
         session: shell-A
         actions:
-          - type: "TAG=v$(date +%Y%m%d-%H%M%S) && echo $TAG"
+          - type: "TOKEN=tk_$(date +%s%3N) && echo $TOKEN"
           - enter: true
-          - sleep_ms: 1000
-          - capture: build_tag    # store last output line for cross-session use
+          - sleep_ms: 800
+          - capture: auth_token    # snapshot — available to any pane in any later step
       - type: terminal
         session: shell-B
-        actions: []               # shell-B is live but idle this step
+        actions: []
 
-  - id: cross-session-paste
-    narration: "Shell B receives the tag from Shell A — no manual copy-paste. The browser session navigates to a new page while both shells continue."
+  - id: silent-secret
+    narration: "Shell B reads the token silently. paste_from types it without echoing — the terminal never shows the value."
     layout: 3-left
     panes:
       - type: browser
-        session: docs             # same session — cookies and navigation state persist
+        session: web
         actions:
           - goto: "https://github.com/scottrigby/showtape/blob/main/README.md"
       - type: terminal
-        session: shell-A          # shell-A scrollback from step 1 still visible
+        session: shell-A
         actions:
-          - type: "echo 'Tag is in the shared buffer'"
+          - type: "echo 'Token captured, sharing cross-session'"
           - enter: true
           - sleep_ms: 1000
       - type: terminal
         session: shell-B
         actions:
-          - type: "DEPLOY_TAG="
-          - paste_from: build_tag  # types the captured value char-by-char
+          - type: "read -s TOKEN"     # -s suppresses echo
           - enter: true
+          - sleep_ms: 400             # wait for read to be ready
+          - paste_from: auth_token    # typed silently — nothing shown on screen
+          - enter: true               # complete the read
           - sleep_ms: 300
-          - type: "echo Deploying $DEPLOY_TAG"
+          - type: "echo Token length is ${#TOKEN} chars"
+          - enter: true
+          - sleep_ms: 1000
+
+  - id: cross-step-paste
+    narration: "Same buffer, three steps later. Shell A uses the token captured back in step one."
+    layout: 3-left
+    panes:
+      - type: browser
+        session: web
+        actions:
+          - goto: "https://github.com/scottrigby/showtape"
+      - type: terminal
+        session: shell-A
+        actions:
+          - type: "curl -s -H 'Authorization: Bearer "
+          - paste_from: auth_token    # cross-step: buffer from step 1 still live
+          - type: "' https://example.com/api"
           - enter: true
           - sleep_ms: 1500
-
-  - id: shell-A-fullscreen
-    narration: "Shell A goes full screen. Both commands from earlier steps are right here in scrollback."
-    end_buffer_ms: 500
-    panes:
       - type: terminal
-        session: shell-A          # same session, now at 1920x1080 — history intact
+        session: shell-B
+        actions: []
+
+  - id: browser-to-terminal
+    narration: "Browser capture extracts text from the page DOM and pastes it into the terminal."
+    layout: 3-left
+    panes:
+      - type: browser
+        session: web
         actions:
-          - type: "echo 'Full scrollback across all steps'"
+          - goto: "https://example.com"
+          - capture: { selector: "h1", to: page_heading }   # grabs "Example Domain"
+      - type: terminal
+        session: shell-A
+        actions:
+          - type: "echo 'Page says: "
+          - paste_from: page_heading
+          - type: "'"
           - enter: true
-          - sleep_ms: 2000
+          - sleep_ms: 1000
+      - type: terminal
+        session: shell-B
+        actions: []

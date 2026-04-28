@@ -239,7 +239,7 @@ def filter_graph(n, layout, fps, w, h):
 # ---------- Browser pane ----------
 
 def estimate_browser_ms(actions):
-    total = sum(BROWSER_ACTION_ESTIMATES.get(next(iter(a)), 1000)
+    total = sum(BROWSER_ACTION_ESTIMATES.get(next(iter(a)), 300)
                 for a in (actions or []) if isinstance(a, dict))
     return total + 500
 
@@ -250,8 +250,21 @@ def run_browser_action(page, action):
     key, val = next(iter(action.items()))
     if key == "goto":
         page.goto(val, wait_until="domcontentloaded", timeout=20000)
+    elif key == "capture":
+        # Extract text from a DOM element or JS expression into a named buffer.
+        # val: { selector: "css", to: "name" }  — innerText of matching element
+        #   OR { eval: "js expr", to: "name" }  — result of page.evaluate()
+        buf = val["to"]
+        if "eval" in val:
+            _session_buffers[buf] = str(page.evaluate(val["eval"]) or "").strip()
+        else:
+            el = page.query_selector(val["selector"])
+            _session_buffers[buf] = el.inner_text().strip() if el else ""
     elif key == "fill":
-        page.fill(val["selector"], val["value"], timeout=10000)
+        selector = val["selector"]
+        # Support paste_from: to fill from a cross-pane buffer.
+        value = _session_buffers.get(val["paste_from"]) if "paste_from" in val else val["value"]
+        page.fill(selector, value or "", timeout=10000)
     elif key == "click":
         sel = val if isinstance(val, str) else val["selector"]
         page.click(sel, timeout=10000)
@@ -586,31 +599,41 @@ def _wait_for_tmux_clients(tmux_sid, n, timeout_s=20.0):
 def _capture_last_output(tmux_sid, buffer_name):
     """Capture the last command's output from a tmux pane into _session_buffers.
 
-    Parses tmux capture-pane output using the known '$ ' prompt format.
-    Looks for the most recent block of non-prompt lines between the last two
-    '$ ...' prompt lines. The result is stripped and stored under buffer_name.
+    Works with any bash prompt style. Bash prompts always contain '$ ' as a
+    separator between the prompt prefix and the command (e.g. 'user@host:~$ cmd'
+    or '$ cmd'). Scans backward for the current empty prompt (line ending with
+    '$' or '$ '), then the previous prompt+command line (line containing '$ '
+    with text after it). Everything between them is the command's output.
+
+    A `sleep_ms:` action before `capture:` is required so the command has time
+    to complete before capture-pane runs.
     """
     result = subprocess.run(
         ["tmux", "capture-pane", "-p", "-t", tmux_sid],
         capture_output=True, text=True, check=True,
     )
     lines = result.stdout.split("\n")
-    # Find last empty prompt (just "$" or "$ ")
+    stripped = [l.rstrip() for l in lines]
+
+    # Find the last empty prompt: line ending with "$" or "$ " (nothing after)
     last_prompt = None
-    for i in range(len(lines) - 1, -1, -1):
-        if lines[i].rstrip() in ("$", "$ "):
+    for i in range(len(stripped) - 1, -1, -1):
+        if re.search(r'\$\s*$', stripped[i]):
             last_prompt = i
             break
-    # Find previous prompt+command line (starts with "$ " and has content)
+
+    # Find the previous prompt+command: line containing "$ " followed by text
     prev_prompt = None
     if last_prompt is not None:
         for i in range(last_prompt - 1, -1, -1):
-            if lines[i].startswith("$ ") and len(lines[i].strip()) > 1:
+            m = re.search(r'\$ (.+)', stripped[i])
+            if m and m.group(1).strip():
                 prev_prompt = i
                 break
+
     if prev_prompt is not None and last_prompt is not None:
         output = "\n".join(
-            l.rstrip() for l in lines[prev_prompt + 1:last_prompt] if l.strip()
+            l for l in stripped[prev_prompt + 1:last_prompt] if l.strip()
         )
         _session_buffers[buffer_name] = output
     else:
@@ -703,13 +726,6 @@ def _setup_sessions(step_plans, font_size):
             ["tmux", "set-option", "-t", tmux_sid, "window-size", "latest"],
             check=True, capture_output=True,
         )
-        # Simple prompt required for capture: to parse last command output.
-        # Also cleaner visually in recordings than the full hostname prompt.
-        subprocess.run(
-            ["tmux", "send-keys", "-t", tmux_sid, "export PS1='$ '", "Enter"],
-            check=True, capture_output=True,
-        )
-        time.sleep(0.15)
         result[sid] = tmux_sid
         dim_str = ", ".join(f"{w}x{h}" for (w, h) in unique_dims)
         print(f"  session '{sid}' → tmux '{tmux_sid}' {cols}x{rows} font={font_size}px ({dim_str})")
