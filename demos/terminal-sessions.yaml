@@ -1,6 +1,6 @@
 title: terminal-sessions-demo
 resolution: { w: 1920, h: 1080 }
-voice: 0
+speaker: 0
 
 # Demonstrates terminal `session:` continuity, including:
 #   - a session that's absent for one step and returns with full scrollback

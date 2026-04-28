@@ -48,8 +48,9 @@ These are pure binary caches — nothing project-specific writes to either path.
 ```yaml
 title: my-feature-walkthrough
 resolution: { w: 1920, h: 1080 }
-voice: 0                  # Piper speaker id
-terminal_font_size: 18    # optional; default 18. applies to all terminal panes.
+voice_model: en_US-libritts_r-medium   # optional — auto-detected if only one model is installed
+speaker: 0                             # optional — speaker index within the model (default 0)
+terminal_font_size: 18                 # optional — applies to all terminal panes (default 18)
 
 pronunciations:                       # optional — applied to every step's narration
   Kubernetes: "kuber-NETT-eez"        # whole-word, case-insensitive substitution

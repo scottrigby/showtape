@@ -1,6 +1,6 @@
 title: paste-demo
 resolution: { w: 1920, h: 1080 }
-voice: 0
+speaker: 0
 
 # Demonstrates the `paste:` terminal action introduced in v0.4.0.
 # Pair each step's narration with a long command in the terminal pane

@@ -1,6 +1,6 @@
 title: multi-layout-showcase
 resolution: { w: 1920, h: 1080 }
-voice: 0
+speaker: 0
 
 # Showcases all four pane counts (1, 2, 3, 4) and the four 3-pane layouts.
 # `id` is optional — when omitted the recorder uses step{index}.

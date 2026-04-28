@@ -53,16 +53,30 @@ def voice_model_search_paths():
     ]
 
 
+def _find_installed_voice_models() -> list[Path]:
+    """Return all .onnx files found across the voice model search paths."""
+    found = {}  # name → path, dedup by filename
+    for base in voice_model_search_paths():
+        if base.is_dir():
+            for p in base.glob("*.onnx"):
+                found.setdefault(p.name, p)
+    return list(found.values())
+
+
 def resolve_voice_model(voice_model: str | None) -> Path:
     """Resolve a voice model spec to an absolute path.
 
     Accepts:
-      - None         → DEFAULT_VOICE_MODEL_NAME, looked up in search paths
+      - None         → auto-detect if exactly one model is installed;
+                       otherwise fall back to DEFAULT_VOICE_MODEL_NAME
       - bare name    → looked up in search paths
       - relative path → resolved against cwd
       - absolute path → used as-is
     """
     if voice_model is None:
+        installed = _find_installed_voice_models()
+        if len(installed) == 1:
+            return installed[0]
         voice_model = DEFAULT_VOICE_MODEL_NAME
     p = Path(voice_model)
     if p.is_absolute() and p.exists():
@@ -79,9 +93,12 @@ def resolve_voice_model(voice_model: str | None) -> Path:
     if p.exists():
         return p.resolve()
     searched = "\n  ".join(str(b) for b in voice_model_search_paths())
+    installed = _find_installed_voice_models()
+    hint = (f"Installed models: {', '.join(p.stem for p in installed)}"
+            if installed else
+            f"Run `showtape fetch-voice {DEFAULT_VOICE_MODEL_NAME}` to install.")
     raise FileNotFoundError(
-        f"voice model {voice_model!r} not found. Searched:\n  {searched}\n"
-        f"Run `showtape fetch-voice {DEFAULT_VOICE_MODEL_NAME}` to install."
+        f"voice model {voice_model!r} not found. Searched:\n  {searched}\n{hint}"
     )
 
 
@@ -720,7 +737,8 @@ def render(yaml_path, out=None, work_dir=None, voice_model=None, keep_work=False
     spec = yaml.safe_load(yaml_path.read_text())
     res = spec.get("resolution", {"w": 1920, "h": 1080})
     output_w, output_h = res["w"], res["h"]
-    default_voice = spec.get("voice", 0)
+    default_voice = int(spec.get("speaker", 0))
+    spec_voice_model = spec.get("voice_model")       # overrides --voice-model if set
     pronunciations = spec.get("pronunciations") or {}
     font_size = int(spec.get("terminal_font_size", DEFAULT_TERMINAL_FONT_SIZE))
 
@@ -730,9 +748,20 @@ def render(yaml_path, out=None, work_dir=None, voice_model=None, keep_work=False
         shutil.rmtree(work)
     work.mkdir(parents=True, exist_ok=True)
 
-    voice_path = resolve_voice_model(voice_model)
+    # CLI --voice-model takes precedence; YAML voice_model: is the fallback.
+    voice_path = resolve_voice_model(voice_model or spec_voice_model)
     print(f"Loading Piper voice from {voice_path}...")
     voice = PiperVoice.load(str(voice_path))
+    # If the model is single-speaker, speaker 0 is the only option and
+    # specifying `speaker:` in the YAML is optional. For multi-speaker models
+    # (e.g. en_US-libritts_r-medium with 904 speakers), default_voice selects
+    # which speaker to use; 0 is valid but the user may want to pick another.
+    num_speakers = getattr(voice.config, "num_speakers", 1) or 1
+    if default_voice >= num_speakers:
+        raise ValueError(
+            f"speaker: {default_voice} is out of range for {voice_path.stem} "
+            f"({num_speakers} speaker{'s' if num_speakers != 1 else ''}; valid: 0–{num_speakers - 1})"
+        )
 
     # Reset browser session storage per-render.
     _session_storage.clear()
