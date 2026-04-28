@@ -16,6 +16,7 @@ import re
 import shutil
 import subprocess
 import sys
+import threading
 import time
 import wave
 from pathlib import Path
@@ -43,6 +44,11 @@ _session_storage: dict[str, dict] = {}
 _session_scroll: dict[str, int] = {}
 # Last navigated URL keyed by browser session id.
 _session_url: dict[str, str] = {}
+
+# Live Playwright contexts for named browser sessions.
+# Kept alive for the entire render so the page (JS state, timers, form values)
+# persists across steps without re-navigation.
+_live_browsers: dict = {}  # session_id → {pw, browser, ctx, page}
 
 # Named cross-session copy buffers.
 _session_buffers: dict[str, str] = {}
@@ -246,6 +252,101 @@ def estimate_browser_ms(actions):
     return total + 500
 
 
+class _ScreenshotRecorder:
+    """Captures page screenshots at a fixed fps in a background thread.
+
+    Playwright's sync API is thread-safe — screenshot calls from this thread
+    are dispatched through the same event loop as the main thread's actions.
+    """
+
+    def __init__(self, page, fps=FPS):
+        self._page = page
+        self._interval = 1.0 / fps
+        self._frames: list[bytes] = []
+        self._running = False
+        self._thread: threading.Thread | None = None
+
+    def start(self):
+        self._running = True
+        self._thread = threading.Thread(target=self._run, daemon=True)
+        self._thread.start()
+
+    def stop(self) -> list[bytes]:
+        self._running = False
+        if self._thread:
+            self._thread.join(timeout=5.0)
+        return self._frames
+
+    def _run(self):
+        while self._running:
+            t = time.monotonic()
+            try:
+                self._frames.append(self._page.screenshot(type="png"))
+            except Exception:
+                pass
+            elapsed = time.monotonic() - t
+            sleep = self._interval - elapsed
+            if sleep > 0:
+                time.sleep(sleep)
+
+
+def _frames_to_mp4(frames: list[bytes], output_path: Path, dims: tuple,
+                   fps: int = FPS, skip_frames: int = 0):
+    """Encode a list of raw PNG bytes to MP4 via ffmpeg image2pipe."""
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    frames = frames[skip_frames:]
+    if not frames:
+        return
+    proc = subprocess.Popen([
+        "ffmpeg", "-y",
+        "-f", "image2pipe", "-framerate", str(fps), "-vcodec", "png", "-i", "pipe:",
+        "-vf", f"scale={dims[0]}:{dims[1]},setsar=1",
+        "-c:v", "libx264", "-preset", "veryfast", "-crf", "22",
+        "-pix_fmt", "yuv420p", "-r", str(fps),
+        str(output_path),
+    ], stdin=subprocess.PIPE, stderr=subprocess.DEVNULL)
+    for frame in frames:
+        proc.stdin.write(frame)
+    proc.stdin.close()
+    proc.wait()
+
+
+def _setup_browser_sessions(step_plans):
+    """Create one live Playwright context per named browser session.
+
+    Named sessions (panes with an explicit session: key) get a persistent
+    Playwright context that stays open for the entire render. The page's full
+    state — URL, scroll, JS timers, form values, sessionStorage — is preserved
+    across steps without re-navigation. Non-session panes continue to use the
+    existing fresh-context-per-step approach.
+    """
+    session_ids = set()
+    for plan in step_plans:
+        for pane in plan.get("panes") or []:
+            if pane.get("type") == "browser" and "session" in pane:
+                session_ids.add(pane["session"])
+
+    for sid in sorted(session_ids):
+        pw = sync_playwright().start()
+        browser = pw.chromium.launch(headless=True)
+        ctx = browser.new_context(viewport={"width": 1920, "height": 1080})
+        page = ctx.new_page()
+        _live_browsers[sid] = {"pw": pw, "browser": browser, "ctx": ctx, "page": page}
+        print(f"  browser session '{sid}' → live Playwright context")
+
+
+def _teardown_browser_sessions():
+    """Close all live browser sessions created by _setup_browser_sessions."""
+    for sid, info in list(_live_browsers.items()):
+        try:
+            info["ctx"].close()
+            info["browser"].close()
+            info["pw"].stop()
+        except Exception:
+            pass
+    _live_browsers.clear()
+
+
 def run_browser_action(page, action):
     if not isinstance(action, dict) or len(action) != 1:
         raise ValueError(f"browser action must be a single-key mapping: {action!r}")
@@ -366,13 +467,54 @@ def _run_browser_session(pane, dims, target_ms=None, record=True, video_dir=None
     return webms[-1]
 
 
+def _record_live_browser_pane(pane, target_ms, dims, video_dir, warmup_ms=0):
+    """Record a live-session browser pane via screenshot capture.
+
+    The Playwright context stays open across steps so the page's full state
+    (URL, scroll, sessionStorage, JS timers, form values) is preserved without
+    re-navigation.
+    """
+    info = _live_browsers[pane["session"]]
+    page = info["page"]
+
+    # Resize viewport to match this step's pane dimensions.
+    page.set_viewport_size({"width": dims[0], "height": dims[1]})
+
+    # Capture screenshots at FPS while actions run.
+    recorder = _ScreenshotRecorder(page, fps=FPS)
+    recorder.start()
+
+    start = time.monotonic()
+    try:
+        for action in pane.get("actions") or []:
+            run_browser_action(page, action)
+    except Exception as e:
+        print(f"  ! browser action error: {e}", file=sys.stderr)
+
+    elapsed_ms = int((time.monotonic() - start) * 1000)
+    remaining = target_ms + warmup_ms - elapsed_ms
+    if remaining > 0:
+        page.wait_for_timeout(remaining)
+
+    frames = recorder.stop()
+
+    # Encode, skipping warmup frames so the white-canvas load is hidden.
+    skip = int(warmup_ms / 1000 * FPS)
+    out_path = video_dir / "recording.mp4"
+    _frames_to_mp4(frames, out_path, dims, fps=FPS, skip_frames=skip)
+    return out_path
+
+
 def record_browser_pane(pane, target_ms, dims, video_dir, warmup_ms=0):
     video_dir.mkdir(parents=True, exist_ok=True)
+    # Named sessions use a persistent live context (full page state preserved).
+    if "session" in pane and pane["session"] in _live_browsers:
+        return _record_live_browser_pane(pane, target_ms, dims, video_dir, warmup_ms)
+    # Non-session panes: fresh context per step (original approach).
     record_ms = target_ms + warmup_ms
     webm = _run_browser_session(pane, dims, target_ms=record_ms, record=True, video_dir=video_dir)
     if warmup_ms <= 0:
         return webm
-    # Trim the leading warmup frames (page-load white canvas) from the WebM.
     trimmed = video_dir / "trimmed.webm"
     subprocess.run([
         "ffmpeg", "-y", "-ss", f"{warmup_ms / 1000}",
@@ -383,7 +525,18 @@ def record_browser_pane(pane, target_ms, dims, video_dir, warmup_ms=0):
 
 def advance_browser_pane(pane, dims):
     """Run browser pane actions without recording — advances session state only."""
-    if pane.get("actions"):
+    if not pane.get("actions"):
+        return
+    if "session" in pane and pane["session"] in _live_browsers:
+        info = _live_browsers[pane["session"]]
+        page = info["page"]
+        page.set_viewport_size({"width": dims[0], "height": dims[1]})
+        try:
+            for action in pane.get("actions") or []:
+                run_browser_action(page, action)
+        except Exception as e:
+            print(f"  ! browser action error: {e}", file=sys.stderr)
+    else:
         _run_browser_session(pane, dims, record=False)
 
 
@@ -915,6 +1068,7 @@ def render(yaml_path, out=None, work_dir=None, voice_model=None, keep_work=False
     _session_scroll.clear()
     _session_url.clear()
     _session_buffers.clear()
+    _live_browsers.clear()
 
     # ---- Pass 1: plan every step (synth narration, compute durations, layout) ----
     # Splitting this off lets us know all step durations BEFORE we render any
@@ -976,8 +1130,9 @@ def render(yaml_path, out=None, work_dir=None, voice_model=None, keep_work=False
         print(f"  [{i}] {sid} ({n} pane{'s' if n > 1 else ''}{layout_str}){rec_flag} "
               f"narration={narration_ms}ms est={estimates} end_buffer={end_buffer_ms}ms → step={step_ms}ms")
 
-    # ---- Pass 2: start tmux sessions for all session: <id> panes ----
-    print("\n=== Starting tmux sessions ===")
+    # ---- Pass 2: start persistent sessions (browser + terminal) ----
+    print("\n=== Starting sessions ===")
+    _setup_browser_sessions(step_plans)
     session_map = _setup_sessions(step_plans, font_size)
 
     # ---- Pass 3: record panes and composite, step by step ----
@@ -1043,6 +1198,7 @@ def render(yaml_path, out=None, work_dir=None, voice_model=None, keep_work=False
             clip_paths.append(clip_path)
     finally:
         _teardown_sessions(session_map)
+        _teardown_browser_sessions()
 
     print(f"\n=== Concatenating {len(clip_paths)} clips → {out_path} ===")
     concat_clips(clip_paths, out_path, work)
