@@ -935,7 +935,7 @@ def render(yaml_path, out=None, work_dir=None, voice_model=None, keep_work=False
         if not record and len(panes) > 4:
             raise ValueError(f"step {sid}: too many panes ({len(panes)})")
         n = len(panes)
-        layout = step.get("layout", "3-left" if n == 3 else None)
+        layout = step.get("layout", "3-left" if n == 3 else None) if n else None
         if n == 3 and layout not in LAYOUTS_3:
             raise ValueError(f"step {sid}: 3-pane layout must be one of {LAYOUTS_3}, got {layout!r}")
 
@@ -961,7 +961,7 @@ def render(yaml_path, out=None, work_dir=None, voice_model=None, keep_work=False
         if not narration:
             silent_wav(narration_wav, step_ms)
 
-        dims_list = pane_dimensions(n, output_w, output_h, layout)
+        dims_list = pane_dimensions(n, output_w, output_h, layout) if n else []
         plan = {
             "idx": i, "step": step, "sid": sid, "panes": panes, "n": n,
             "layout": layout, "step_ms": step_ms, "narration_ms": narration_ms,
