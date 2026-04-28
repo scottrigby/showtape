@@ -63,6 +63,7 @@ steps:
     end_buffer_ms: 250             # optional — extend step after all actions finish
     browser_warmup_ms: 1500        # optional — trim leading white canvas from browser panes
     record: false                  # optional — run actions but exclude step from output
+    wait_ms: 5000                  # with record: false: pure Python sleep, no panes needed
     panes:                         # 1–4 entries; layout is derived
       - type: browser
         session: dashboard         # optional; cookies/storage persist across steps
