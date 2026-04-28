@@ -527,19 +527,23 @@ def _unique_session_dims(occurrences):
 def _compute_session_geometry(unique_dims, padding=30):
     """Return (cols, rows) for the tmux session using the fixed session font.
 
-    Uses the natural terminal grid for the smallest dim across all the
-    session's appearances. Larger viewport dims show the same content with
-    empty space to the right/bottom — consistent visual size across steps.
+    Uses the natural terminal grid for the LARGEST dim across all the
+    session's appearances. This prevents tmux from filling smaller-viewport
+    steps with dots (tmux only fills with dots when the session is smaller
+    than the client; if the session is larger, the client shows a clean
+    sub-view of the session content). Steps with smaller viewports see the
+    leftmost portion of the session — content is never falsely wrapped by the
+    shell, though very long lines may be clipped at the right edge.
     """
-    min_cols, min_rows = 10000, 10000
+    max_cols, max_rows = 0, 0
     for (w, h) in unique_dims:
         inner_w = max(1, w - 2 * padding)
         inner_h = max(1, h - 2 * padding)
         cols = max(40, int(inner_w / (_SESSION_FONT_SIZE * _CHAR_WIDTH_RATIO)))
         rows = max(8, int(inner_h / (_SESSION_FONT_SIZE * _LINE_HEIGHT_RATIO)))
-        min_cols = min(min_cols, cols)
-        min_rows = min(min_rows, rows)
-    return min_cols, min_rows
+        max_cols = max(max_cols, cols)
+        max_rows = max(max_rows, rows)
+    return max_cols, max_rows
 
 
 def _wait_for_tmux_clients(tmux_sid, n, timeout_s=20.0):
