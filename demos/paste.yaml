@@ -9,27 +9,27 @@ speaker: 0
 steps:
   - id: type-vs-paste
     narration: "Here's the difference between type and paste, side by side."
+    end_buffer_ms: 1500
     panes:
       - type: terminal
         actions:
           - type: "echo 'this is typed character by character at fifty milliseconds each'"
           - enter: true
-          - sleep_ms: 1500
       - type: terminal
         actions:
           - paste: "echo 'this is pasted, appearing nearly instantly'"
-          - sleep_ms: 1500
 
   - id: long-command
     narration: "Pasted is the right move when commands are long enough that typing would be tedious."
+    end_buffer_ms: 2000
     panes:
       - type: terminal
         actions:
           - paste: "for i in one two three four five six seven eight nine ten; do echo counting $i; done"
-          - sleep_ms: 2000
 
   - id: multi-line
     narration: "It also handles multi-line scripts, with each line executing in turn."
+    end_buffer_ms: 2000
     panes:
       - type: terminal
         actions:
@@ -37,10 +37,10 @@ steps:
               echo "first command"
               echo "second command"
               echo "third command"
-          - sleep_ms: 2000
 
   - id: continuation
     narration: "And backslash continuations work too, because bash reassembles them on its own."
+    end_buffer_ms: 2000
     panes:
       - type: terminal
         actions:
@@ -48,4 +48,3 @@ steps:
               echo "this command is split across" \
                 "multiple lines using" \
                 "shell continuation"
-          - sleep_ms: 2000

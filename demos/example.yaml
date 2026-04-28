@@ -5,6 +5,7 @@ speaker: 0
 steps:
   - id: intro
     narration: "Welcome! Let me show you Piper, an open source text to speech engine."
+    end_buffer_ms: 1500
     panes:
       - type: browser
         actions:
@@ -16,10 +17,10 @@ steps:
           - sleep_ms: 600
           - type: "uname -srm"
           - enter: true
-          - sleep_ms: 1500
 
   - id: voices
     narration: "Piper ships with hundreds of voices, all hosted on Hugging Face."
+    end_buffer_ms: 1500
     panes:
       - type: browser
         actions:
@@ -31,10 +32,10 @@ steps:
           - sleep_ms: 600
           - type: "echo 'libritts, ljspeech, lessac, kathleen ...'"
           - enter: true
-          - sleep_ms: 1500
 
   - id: install
     narration: "Installation is one pip command. No API keys, no cloud account."
+    end_buffer_ms: 1200
     panes:
       - type: browser
         actions:
@@ -46,10 +47,10 @@ steps:
           - sleep_ms: 1200
           - type: "# pip install piper-tts"
           - enter: true
-          - sleep_ms: 1200
 
   - id: synthesize
     narration: "Synthesizing speech takes a single command. Pipe text in, get audio out."
+    end_buffer_ms: 1500
     panes:
       - type: browser
         actions:
@@ -58,10 +59,10 @@ steps:
         actions:
           - type: "echo 'Hello, world!' | head"
           - enter: true
-          - sleep_ms: 1500
 
   - id: outro
     narration: "Open source, fast, and running entirely on your own hardware. That's Piper."
+    end_buffer_ms: 1500
     panes:
       - type: browser
         actions:
@@ -73,4 +74,3 @@ steps:
           - sleep_ms: 500
           - type: "date"
           - enter: true
-          - sleep_ms: 1500

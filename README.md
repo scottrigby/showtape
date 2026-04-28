@@ -95,6 +95,8 @@ Layouts come from pane count:
 
 Step duration = `max(narration, all action estimates) + end_buffer_ms`. Each pane stretches to fill the step.
 
+`sleep_ms:` in terminal actions is for **mid-action pauses** only (e.g., waiting for a command to finish before typing the next one). A trailing `sleep_ms:` at the end of an actions list is redundant — the step's remaining time already pads every pane to `step_ms`. Use `end_buffer_ms:` on the step instead to extend viewing time after all actions complete.
+
 **Browser sessions** persist cookies / localStorage across steps within a render — `session: gmail` in step 2 and again in step 5 stays logged in. JavaScript-memory state (unsubmitted form values, open modals) does *not* persist; only what the page itself writes to cookies/storage.
 
 **Terminal sessions** preserve scrollback across steps. A terminal pane with `session: <id>` shares one shell with every other pane using the same id, so commands run in step 1 are still on screen when the session reappears in step 5 — even if intervening steps don't include the terminal at all. Each step attaches a fresh VHS client to a persistent tmux session, records exactly that step's duration, and exits — no slicing or offset math. Sessions can appear at different viewport sizes across steps (e.g., split-screen then full-screen); commands execute exactly once, making sessions safe for write-ops (`helm upgrade`, `kubectl apply`, `git push`). See `demos/terminal-sessions.yaml` for a worked example.

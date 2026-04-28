@@ -16,6 +16,7 @@ steps:
 
   # 1 pane: full-screen terminal
   - narration: "Other times, just a terminal."
+    end_buffer_ms: 1500
     panes:
       - type: terminal
         actions:
@@ -24,11 +25,10 @@ steps:
           - sleep_ms: 500
           - type: "uname -a"
           - enter: true
-          - sleep_ms: 1500
 
   # 2 panes: classic side-by-side
   - narration: "Most often you want both, side by side."
-    end_buffer_ms: 250
+    end_buffer_ms: 1500
     panes:
       - type: browser
         actions:
@@ -37,12 +37,12 @@ steps:
         actions:
           - type: "ls -lh"
           - enter: true
-          - sleep_ms: 1500
 
   # 3 panes, layout 3-left: big browser left, two stacked terminals right
   - id: three-left
     narration: "Three panes — big pane on the left, two stacked on the right."
     layout: 3-left
+    end_buffer_ms: 1200
     panes:
       - type: browser
         actions:
@@ -51,17 +51,16 @@ steps:
         actions:
           - type: "vhs --version"
           - enter: true
-          - sleep_ms: 1200
       - type: terminal
         actions:
           - type: "ttyd --version | head -1"
           - enter: true
-          - sleep_ms: 1200
 
   # 3 panes, layout 3-right: same content, big pane swings to the right
   - id: three-right
     narration: "Or flipped — big pane on the right."
     layout: 3-right
+    end_buffer_ms: 1200
     panes:
       - type: browser
         actions:
@@ -70,17 +69,16 @@ steps:
         actions:
           - type: "ps -o pid,comm | head -3"
           - enter: true
-          - sleep_ms: 1200
       - type: terminal
         actions:
           - type: "df -h / | head -2"
           - enter: true
-          - sleep_ms: 1200
 
   # 3 panes, layout 3-top: header browser on top, two terminals below
   - id: three-top
     narration: "Top header, two below."
     layout: 3-top
+    end_buffer_ms: 1200
     panes:
       - type: browser
         actions:
@@ -89,17 +87,16 @@ steps:
         actions:
           - type: "uptime"
           - enter: true
-          - sleep_ms: 1200
       - type: terminal
         actions:
           - type: "free -h | head -2"
           - enter: true
-          - sleep_ms: 1200
 
   # 3 panes, layout 3-bottom: two terminals on top, browser footer below
   - id: three-bottom
     narration: "Or two on top, one below."
     layout: 3-bottom
+    end_buffer_ms: 1200
     panes:
       - type: browser
         actions:
@@ -108,17 +105,15 @@ steps:
         actions:
           - type: "echo 'pane B'"
           - enter: true
-          - sleep_ms: 1200
       - type: terminal
         actions:
           - type: "echo 'pane C'"
           - enter: true
-          - sleep_ms: 1200
 
   # 4 panes: 2x2 grid
   - id: four-grid
     narration: "And for complex flows, a four pane grid."
-    end_buffer_ms: 500
+    end_buffer_ms: 1200
     panes:
       - type: browser
         actions:
@@ -130,9 +125,7 @@ steps:
         actions:
           - type: "echo 'bottom left'"
           - enter: true
-          - sleep_ms: 1200
       - type: terminal
         actions:
           - type: "echo 'bottom right'"
           - enter: true
-          - sleep_ms: 1200

@@ -22,6 +22,7 @@ steps:
   - id: shell-A-first
     narration: "Shell A starts up and runs its first command."
     layout: 3-left
+    end_buffer_ms: 1500
     panes:
       - type: browser
         actions:
@@ -31,7 +32,6 @@ steps:
         actions:
           - type: "echo 'shell-A: command 1'"
           - enter: true
-          - sleep_ms: 1500
       - type: terminal
         session: shell-B      # 960x540 — kept alive idle so its slot stays continuous
         actions: []
@@ -39,6 +39,7 @@ steps:
   - id: shell-A-continues
     narration: "Shell ae runs another command. Both commands stay on screen."
     layout: 3-left
+    end_buffer_ms: 1500
     panes:
       - type: browser
         actions:
@@ -48,7 +49,6 @@ steps:
         actions:
           - type: "echo 'shell-A: command 2'"
           - enter: true
-          - sleep_ms: 1500
       - type: terminal
         session: shell-B
         actions: []
@@ -64,6 +64,7 @@ steps:
   - id: shell-B-runs
     narration: "Back to the split layout. Shell A's history is right where we left it. Now shell B runs a command."
     layout: 3-left
+    end_buffer_ms: 1500
     panes:
       - type: browser
         actions:
@@ -76,15 +77,13 @@ steps:
         actions:
           - type: "echo 'shell-B: command 1'"
           - enter: true
-          - sleep_ms: 1500
 
   - id: shell-A-fullscreen
     narration: "And shell ae can resize to full screen. All three of its commands are still here, just bigger."
-    end_buffer_ms: 500
+    end_buffer_ms: 1500
     panes:
       - type: terminal
         session: shell-A      # 1920x1080 — DIFFERENT dim, second VHS render
         actions:
           - type: "echo 'shell-A: command 3 - bigger now'"
           - enter: true
-          - sleep_ms: 1500
