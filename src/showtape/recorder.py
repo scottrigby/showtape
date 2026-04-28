@@ -477,7 +477,7 @@ def _tape_header(output_mp4, dims, font_size):
         f"Set TypingSpeed {DEFAULT_TYPING_SPEED_MS}ms",
         'Set Theme "Dracula"',
         "Set Padding 30",
-        "Set Shell /bin/bash",
+        "Set Shell bash",
     ]
 
 
@@ -713,9 +713,10 @@ def _setup_sessions(step_plans, font_size):
         # LC_ALL=C avoids "cannot change locale" warnings from bash startup.
         # /bin/bash keeps the demo shell predictable — no zsh/oh-my-zsh prompt
         # redraws that would cause visual noise in recordings.
+        bash = shutil.which("bash") or "/bin/bash"
         subprocess.run(
             ["tmux", "new-session", "-d", "-s", tmux_sid,
-             "-x", str(cols), "-y", str(rows), "-e", "LC_ALL=C", "/bin/bash"],
+             "-x", str(cols), "-y", str(rows), "-e", "LC_ALL=C", bash],
             check=True,
         )
         # window-size latest: tmux auto-resizes the window to each attaching
