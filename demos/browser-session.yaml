@@ -2,79 +2,90 @@ title: browser-session-demo
 resolution: { w: 1920, h: 1080 }
 speaker: 0
 
-# Demonstrates true browser session continuity — the Playwright context
-# stays alive across steps so the page's full state (URL, scroll, JS,
-# sessionStorage) is preserved without re-navigation.
+# Object permanence demo: browser sessions stay alive and exactly where
+# you left them, even across steps where they're completely off-screen.
 #
-# Use case shown: two independent browser sessions exchange data via
-# capture: / paste_from:, simulating a flow like "fill form → check
-# another tab → paste result back" — e.g. copying a verification code
-# from an email into a waiting form field.
-#
-# Step 2 uses session: web with NO actions — the page stays exactly where
-# step 1 left it (scrolled, same URL) to prove the context never closed.
+# Story:
+#   1. Open two browser sessions — GitHub README left, ARCHITECTURE.md right
+#   2. Scroll each to an identifiable heading
+#   3. Fullscreen terminal — no browser panes at all, sessions running off-screen
+#   4. Bring GitHub back (left) + terminal (right): still scrolled. Capture the
+#      heading and paste it into the terminal.
+#   5. Replace terminal with architecture session (right): still scrolled too.
 
 pronunciations:
   showtape: "show tape"
+  ARCHITECTURE: "architecture"
 
 steps:
-  - id: open-pages
-    narration: "Two independent browser sessions open simultaneously. Session web scrolls into the page."
-    layout: 3-left
+  - id: open-sessions
+    narration: "Two independent browser sessions open simultaneously — the GitHub readme on the left, the architecture docs on the right."
     end_buffer_ms: 1000
+    browser_warmup_ms: 1500
     panes:
       - type: browser
-        session: web
+        session: github
         actions:
           - goto: "https://github.com/scottrigby/showtape"
-          - scroll: { y: 800 }
       - type: browser
-        session: docs
+        session: arch
         actions:
-          - goto: "https://github.com/scottrigby/showtape/blob/main/README.md"
-          - capture: { selector: "h1", to: page_title }
-      - type: terminal
-        session: shell
-        actions:
-          - type: "echo 'Both browser sessions are now live'"
-          - enter: true
+          - goto: "https://github.com/scottrigby/showtape/blob/main/ARCHITECTURE.md"
 
-  - id: session-persists
-    narration: "Session web has no actions this step — no goto, no scroll — yet the page stays exactly where it was."
-    layout: 3-left
+  - id: scroll-to-headings
+    narration: "In the GitHub session we scroll to the devcontainer section. In the architecture docs we scroll to the pipeline section."
     end_buffer_ms: 1500
     panes:
       - type: browser
-        session: web           # no actions: context alive, page still scrolled to y=800
-        actions: []
-      - type: browser
-        session: docs
+        session: github
         actions:
-          - scroll: { y: 400 }
+          - scroll: { y: 650 }   # "Use it as a devcontainer feature" H2
+      - type: browser
+        session: arch
+        actions:
+          - scroll: { y: 900 }   # "Pipeline" H2
+
+  - id: terminal-only
+    narration: "Both browser sessions are running off-screen. This terminal step has no browser panes at all."
+    end_buffer_ms: 2000
+    panes:
       - type: terminal
         session: shell
         actions:
-          - type: "echo 'Pasting page title captured from docs session:'"
+          - type: "echo 'Browser sessions are alive in the background'"
+          - enter: true
+          - sleep_ms: 500
+          - type: "echo 'Neither has been touched or reloaded'"
+          - enter: true
+
+  - id: github-returns
+    narration: "The GitHub session is back on the left — right where we left it. We capture the heading and paste it into the terminal."
+    end_buffer_ms: 1500
+    panes:
+      - type: browser
+        session: github               # no goto — still scrolled to devcontainer section
+        actions:
+          - capture:
+              eval: "document.querySelector('.markdown-body h2')?.textContent?.trim()"
+              to: section_heading
+      - type: terminal
+        session: shell
+        actions:
+          - type: "echo 'Heading captured from GitHub browser session:'"
           - enter: true
           - sleep_ms: 300
           - type: "echo '"
-          - paste_from: page_title
+          - paste_from: section_heading
           - type: "'"
           - enter: true
 
-  - id: cross-session-paste-browser
-    narration: "The title captured from docs is now pasted into web's search field — cross-session browser data transfer."
-    end_buffer_ms: 1500
+  - id: arch-returns
+    narration: "The architecture session comes back on the right. Both sessions are exactly where we left them — no reloads, no re-navigation."
+    end_buffer_ms: 2000
     panes:
       - type: browser
-        session: web
-        actions:
-          - click: "placeholder=Search or jump to"
-          - wait_for: "input[name=query]"
-          - fill: { selector: "input[name=query]", paste_from: page_title }
-          - sleep_ms: 1000
-      - type: terminal
-        session: shell
-        actions:
-          - type: "echo 'Cross-session paste complete'"
-          - enter: true
+        session: github               # still scrolled to devcontainer section
+        actions: []
+      - type: browser
+        session: arch                 # still scrolled to pipeline section
+        actions: []
