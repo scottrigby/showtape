@@ -60,7 +60,9 @@ pronunciations:                       # optional — applied to every step's nar
 
 steps:
   - narration: "Open the dashboard."
-    end_buffer_ms: 250             # optional, post-step extension
+    end_buffer_ms: 250             # optional — extend step after all actions finish
+    browser_warmup_ms: 1500        # optional — trim leading white canvas from browser panes
+    record: false                  # optional — run actions but exclude step from output
     panes:                         # 1–4 entries; layout is derived
       - type: browser
         session: dashboard         # optional; cookies/storage persist across steps

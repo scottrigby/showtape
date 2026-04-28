@@ -37,12 +37,14 @@ BROWSER_ACTION_ESTIMATES = {
 
 LAYOUTS_3 = ("3-left", "3-right", "3-top", "3-bottom")
 
-# Cookie / localStorage persistence keyed by browser session id. Survives
-# across steps within one render call; reset each call.
+# Cookie / localStorage persistence keyed by browser session id.
 _session_storage: dict[str, dict] = {}
+# Scroll position keyed by browser session id (pixels from top).
+_session_scroll: dict[str, int] = {}
+# Last navigated URL keyed by browser session id.
+_session_url: dict[str, str] = {}
 
-# Named cross-session copy buffers. Populated by `capture:` actions and
-# consumed by `paste_from:` actions. Reset each render call.
+# Named cross-session copy buffers.
 _session_buffers: dict[str, str] = {}
 
 
@@ -291,33 +293,63 @@ def run_browser_action(page, action):
         raise ValueError(f"unknown browser action: {key}")
 
 
-def record_browser_pane(pane, target_ms, dims, video_dir):
-    video_dir.mkdir(parents=True, exist_ok=True)
+def _run_browser_session(pane, dims, target_ms=None, record=True, video_dir=None):
+    """Shared browser session logic for both recording and advance-only modes.
+
+    When record=True: records to video_dir and returns the WebM path.
+    When record=False: runs actions only (for `record: false` steps) and returns None.
+    Persists cookies, localStorage, scroll position, and last URL across calls
+    for the same session id.
+    """
     session = pane.get("session", "default")
     actions = pane.get("actions", [])
     storage = _session_storage.get(session)
 
     with sync_playwright() as p:
         browser = p.chromium.launch(headless=True)
-        ctx_kwargs = dict(
-            viewport={"width": dims[0], "height": dims[1]},
-            record_video_dir=str(video_dir),
-            record_video_size={"width": dims[0], "height": dims[1]},
-        )
+        ctx_kwargs = dict(viewport={"width": dims[0], "height": dims[1]})
+        if record:
+            ctx_kwargs["record_video_dir"] = str(video_dir)
+            ctx_kwargs["record_video_size"] = {"width": dims[0], "height": dims[1]}
         if storage is not None:
             ctx_kwargs["storage_state"] = storage
         ctx = browser.new_context(**ctx_kwargs)
         page = ctx.new_page()
+
+        # Restore scroll position from previous step in this session.
+        # Happens after the first goto fires (page must exist first).
+        scroll_restored = False
+
+        def maybe_restore_scroll():
+            nonlocal scroll_restored
+            if not scroll_restored and session in _session_scroll:
+                try:
+                    page.evaluate(f"window.scrollTo(0, {_session_scroll[session]})")
+                except Exception:
+                    pass
+                scroll_restored = True
+
         start = time.monotonic()
         try:
             for action in actions:
                 run_browser_action(page, action)
+                # Restore scroll after the first goto so it applies to the loaded page.
+                if "goto" in action:
+                    maybe_restore_scroll()
         except Exception as e:
             print(f"  ! browser action error: {e}", file=sys.stderr)
-        elapsed_ms = int((time.monotonic() - start) * 1000)
-        remaining = target_ms - elapsed_ms
-        if remaining > 0:
-            page.wait_for_timeout(remaining)
+
+        if record and target_ms is not None:
+            elapsed_ms = int((time.monotonic() - start) * 1000)
+            remaining = target_ms - elapsed_ms
+            if remaining > 0:
+                page.wait_for_timeout(remaining)
+
+        # Save scroll position and storage state for next step.
+        try:
+            _session_scroll[session] = page.evaluate("window.scrollY") or 0
+        except Exception:
+            pass
         try:
             _session_storage[session] = ctx.storage_state()
         except Exception as e:
@@ -325,10 +357,33 @@ def record_browser_pane(pane, target_ms, dims, video_dir):
         ctx.close()
         browser.close()
 
+    if not record:
+        return None
+
     webms = sorted(video_dir.glob("*.webm"))
     if not webms:
         raise RuntimeError(f"playwright produced no webm in {video_dir}")
     return webms[-1]
+
+
+def record_browser_pane(pane, target_ms, dims, video_dir, warmup_ms=0):
+    video_dir.mkdir(parents=True, exist_ok=True)
+    record_ms = target_ms + warmup_ms
+    webm = _run_browser_session(pane, dims, target_ms=record_ms, record=True, video_dir=video_dir)
+    if warmup_ms <= 0:
+        return webm
+    # Trim the leading warmup frames (page-load white canvas) from the WebM.
+    trimmed = video_dir / "trimmed.webm"
+    subprocess.run([
+        "ffmpeg", "-y", "-ss", f"{warmup_ms / 1000}",
+        "-i", str(webm), "-c", "copy", str(trimmed),
+    ], check=True, capture_output=True)
+    return trimmed
+
+
+def advance_browser_pane(pane, dims):
+    """Run browser pane actions without recording — advances session state only."""
+    _run_browser_session(pane, dims, record=False)
 
 
 # ---------- Terminal pane ----------
@@ -733,6 +788,11 @@ def _setup_sessions(step_plans, font_size):
     return result
 
 
+def advance_terminal_session_pane(pane, tmux_sid):
+    """Drive session terminal actions without recording — advances shell state only."""
+    _drive_actions_via_tmux(tmux_sid, pane.get("actions", []))
+
+
 def _teardown_sessions(session_map):
     """Kill all tmux sessions started by _setup_sessions."""
     for _sid, tmux_sid in session_map.items():
@@ -850,6 +910,8 @@ def render(yaml_path, out=None, work_dir=None, voice_model=None, keep_work=False
 
     # Reset per-render state.
     _session_storage.clear()
+    _session_scroll.clear()
+    _session_url.clear()
     _session_buffers.clear()
 
     # ---- Pass 1: plan every step (synth narration, compute durations, layout) ----
@@ -860,8 +922,10 @@ def render(yaml_path, out=None, work_dir=None, voice_model=None, keep_work=False
     step_plans = []
     for i, step in enumerate(spec["steps"]):
         sid = step.get("id", f"step{i}")
-        narration = step.get("narration", "")
+        record = step.get("record", True)
+        narration = step.get("narration", "") if record else ""
         end_buffer_ms = int(step.get("end_buffer_ms", step.get("pause_ms", 0)))
+        browser_warmup_ms = int(step.get("browser_warmup_ms", 0))
         panes = step.get("panes")
         if not panes or not (1 <= len(panes) <= 4):
             raise ValueError(f"step {sid}: must have 1-4 panes, got {len(panes) if panes else 0}")
@@ -897,10 +961,13 @@ def render(yaml_path, out=None, work_dir=None, voice_model=None, keep_work=False
             "idx": i, "step": step, "sid": sid, "panes": panes, "n": n,
             "layout": layout, "step_ms": step_ms, "narration_ms": narration_ms,
             "narration_wav": narration_wav, "dims_list": dims_list,
+            "record": record,
+            "browser_warmup_ms": browser_warmup_ms,
         }
         step_plans.append(plan)
         layout_str = f", {layout}" if layout else ""
-        print(f"  [{i}] {sid} ({n} pane{'s' if n > 1 else ''}{layout_str}) "
+        rec_flag = "" if record else " [record: false]"
+        print(f"  [{i}] {sid} ({n} pane{'s' if n > 1 else ''}{layout_str}){rec_flag} "
               f"narration={narration_ms}ms est={estimates} end_buffer={end_buffer_ms}ms → step={step_ms}ms")
 
     # ---- Pass 2: start tmux sessions for all session: <id> panes ----
@@ -916,15 +983,32 @@ def render(yaml_path, out=None, work_dir=None, voice_model=None, keep_work=False
             i, sid, n, layout = plan["idx"], plan["sid"], plan["n"], plan["layout"]
             step_ms, panes, dims_list = plan["step_ms"], plan["panes"], plan["dims_list"]
             narration_wav = plan["narration_wav"]
+            record = plan["record"]
+            browser_warmup_ms = plan["browser_warmup_ms"]
             layout_str = f", {layout}" if layout else ""
-            print(f"\n=== [{i}] {sid} ({n} pane{'s' if n > 1 else ''}{layout_str}) ===")
+            rec_flag = "" if record else " [record: false]"
+            print(f"\n=== [{i}] {sid} ({n} pane{'s' if n > 1 else ''}{layout_str}){rec_flag} ===")
+
+            if not record:
+                # Advance state without recording — runs actions, updates sessions,
+                # but produces no clip. Useful for write-ops (helm upgrade, kubectl
+                # apply) or waits (kubectl wait) that shouldn't appear in the output.
+                for j, (pane, dims) in enumerate(zip(panes, dims_list)):
+                    t = pane["type"]
+                    if t == "browser":
+                        advance_browser_pane(pane, dims)
+                    elif t == "terminal" and "session" in pane:
+                        advance_terminal_session_pane(pane, session_map[pane["session"]])
+                    # plain terminals: no persistent state, nothing to advance
+                continue
 
             pane_videos = []
             for j, (pane, dims) in enumerate(zip(panes, dims_list)):
                 t = pane["type"]
                 if t == "browser":
                     v = record_browser_pane(pane, step_ms, dims,
-                                            work / "panes" / f"{i}-{j}-browser")
+                                            work / "panes" / f"{i}-{j}-browser",
+                                            warmup_ms=browser_warmup_ms)
                     sess_label = f" session={pane.get('session', 'default')}"
                 elif t == "terminal" and "session" in pane:
                     sid_term = pane["session"]
