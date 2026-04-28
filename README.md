@@ -117,11 +117,16 @@ showtape --version
 
 The repo eats its own dog food: opening it in a devcontainer-aware editor (VS Code Dev Containers extension, JetBrains Gateway, `devcontainer-cli`) builds a dev environment via the showtape feature itself, then `pip install -e .` overrides the from-git install with the live source.
 
+**If you open the repo via a generic devcontainer profile** (e.g. a claudeman profile that doesn't use the repo's own `.devcontainer/`) the editable install won't fire automatically. Run this once at the start of the session:
+
+```bash
+pip install --user -e . && export PATH="$HOME/.local/bin:$PATH"
+```
+
 ```bash
 git clone https://github.com/scottrigby/showtape && cd showtape
 # In VS Code: "Reopen in Container" — or:
-devcontainer up --workspace-folder .
-devcontainer exec --workspace-folder . showtape fetch-voice en_US-libritts_r-medium
+devcontainer up --workspace-folder . --log-format json   # --log-format json avoids progress-bar terminal hijack
 devcontainer exec --workspace-folder . showtape render demos/example.yaml
 ```
 
