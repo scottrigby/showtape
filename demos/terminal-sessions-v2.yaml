@@ -61,7 +61,7 @@ steps:
 
   - id: shell-A-fullscreen
     narration: "Shell A goes full screen. All previous output is right here — same session, just bigger. The write op ran once."
-    pause_ms: 500
+    end_buffer_ms: 500
     panes:
       - type: terminal
         session: shell-A

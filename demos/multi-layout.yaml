@@ -28,7 +28,7 @@ steps:
 
   # 2 panes: classic side-by-side
   - narration: "Most often you want both, side by side."
-    pause_ms: 250
+    end_buffer_ms: 250
     panes:
       - type: browser
         actions:
@@ -118,7 +118,7 @@ steps:
   # 4 panes: 2x2 grid
   - id: four-grid
     narration: "And for complex flows, a four pane grid."
-    pause_ms: 500
+    end_buffer_ms: 500
     panes:
       - type: browser
         actions:

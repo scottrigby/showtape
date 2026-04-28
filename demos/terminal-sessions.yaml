@@ -80,7 +80,7 @@ steps:
 
   - id: shell-A-fullscreen
     narration: "And shell ae can resize to full screen. All three of its commands are still here, just bigger."
-    pause_ms: 500
+    end_buffer_ms: 500
     panes:
       - type: terminal
         session: shell-A      # 1920x1080 — DIFFERENT dim, second VHS render

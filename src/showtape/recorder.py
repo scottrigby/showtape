@@ -439,6 +439,7 @@ def _tape_header(output_mp4, dims):
         f"Set TypingSpeed {DEFAULT_TYPING_SPEED_MS}ms",
         'Set Theme "Dracula"',
         "Set Padding 30",
+        "Set Shell /bin/bash",
     ]
 
 
@@ -464,22 +465,31 @@ def record_terminal_pane(pane, target_ms, dims, work_dir, key):
 
 # ---------- Terminal sessions (continuity across steps) ----------
 #
-# A terminal pane with `session: <id>` shares one shell across every step
-# that declares the same id. Implementation: one detached tmux server-side
-# session per session id, N VHS clients (one per unique render dim) all
-# attaching to it simultaneously, orchestrator driving commands via
-# `tmux send-keys`. Commands run exactly once — safe for write-ops — while
-# all dim variants record the same activity in real time.
+# A terminal pane with `session: <id>` shares one shell (a tmux server-side
+# session) across every step that uses the same id. Scrollback persists
+# between steps because the tmux session stays alive for the entire render.
+#
+# Recording is per-step: each step that includes a session pane attaches a
+# fresh VHS client to the live tmux session, records exactly that step's
+# duration, and exits. No batch recording, no time-based slicing, no scale
+# factors — each step's MP4 is exactly what happened during that step.
+# Commands run once (safe for write-ops); different steps can use different
+# viewport dims for the same session.
 #
 # Monospace char width / line-height ratios for font → grid-size math.
 # Calibrated for JetBrains Mono (VHS default); ≤5% error at typical sizes.
 _CHAR_WIDTH_RATIO = 0.60
 _LINE_HEIGHT_RATIO = 1.25
 
-# Time budget around the tmux attach phase in each VHS client tape.
-_SESSION_SETTLE_MS = 1000     # Sleep after attach before recording begins
-_SESSION_PREROLL_WAIT_S = 1.5 # Orchestrator waits this long from spawn before driving
-_SESSION_TRAILING_MS = 2000   # Buffer after last command; keeps tpad from over-trimming
+# VHS settle time: how long to hide the tmux attach phase before Show.
+_SESSION_SETTLE_MS = 1000
+# How long after spawning VHS the orchestrator waits before driving actions.
+# Must be > _SESSION_SETTLE_MS / 1000 so that Show fires before the first
+# keystroke and every action lands in the recording.
+_SESSION_PREROLL_WAIT_S = 1.5
+# Extra Sleep after the step's target duration in the VHS tape. Acts as a
+# safety buffer so VHS doesn't exit before the last action's frames land.
+_SESSION_STEP_BUFFER_MS = 1000
 
 
 def _collect_terminal_sessions(step_plans):
@@ -527,32 +537,8 @@ def _compute_session_geometry(unique_dims, cols=80, padding=30):
     return min(all_rows), font_map
 
 
-def _build_attach_tape(tmux_sid, dims, font_size, total_ms, mp4_path):
-    """VHS tape for one (session, dim) client.
-
-    Attaches to the tmux session instantly, settles, then records while the
-    orchestrator drives commands externally via send-keys. No Hide/Show —
-    setup frames are at the front of the MP4 and sliced out via the measured
-    pre-roll offset.
-    """
-    w, h = dims
-    return "\n".join([
-        f'Output "{mp4_path}"',
-        f"Set Width {w}",
-        f"Set Height {h}",
-        f"Set FontSize {font_size}",
-        "Set TypingSpeed 1ms",
-        'Set Theme "Dracula"',
-        "Set Padding 30",
-        f'Type "tmux attach -t {tmux_sid}"',
-        "Enter",
-        f"Sleep {_SESSION_SETTLE_MS}ms",
-        f"Sleep {total_ms + _SESSION_TRAILING_MS}ms",
-    ]) + "\n"
-
-
 def _wait_for_tmux_clients(tmux_sid, n, timeout_s=20.0):
-    """Block until n clients are attached to the tmux session."""
+    """Block until at least n clients are attached to the tmux session."""
     deadline = time.time() + timeout_s
     while time.time() < deadline:
         result = subprocess.run(
@@ -571,11 +557,9 @@ def _wait_for_tmux_clients(tmux_sid, n, timeout_s=20.0):
 def _drive_actions_via_tmux(tmux_sid, actions):
     """Drive terminal actions into a live tmux session via send-keys.
 
-    Mirrors _emit_terminal_actions semantics (same action types, same timing
-    estimates) but operates against a live shell rather than emitting tape
-    lines. Returns used_ms for offset accounting.
+    Mirrors _emit_terminal_actions semantics (same action types, same timing)
+    but sends to a live shell instead of emitting tape lines.
     """
-    used_ms = 0
     for a in actions or []:
         if "type" in a:
             text = _to_shell_safe_ascii(a["type"])
@@ -585,7 +569,6 @@ def _drive_actions_via_tmux(tmux_sid, actions):
                     check=True, capture_output=True,
                 )
                 time.sleep(DEFAULT_TYPING_SPEED_MS / 1000)
-            used_ms += len(text) * DEFAULT_TYPING_SPEED_MS
         if "paste" in a:
             text = _to_shell_safe_ascii(a["paste"])
             chunks = _paste_chunks(text)
@@ -600,156 +583,90 @@ def _drive_actions_via_tmux(tmux_sid, actions):
                 )
                 if k < len(chunks) - 1:
                     time.sleep(0.3)
-                    used_ms += 300
-            used_ms += len(chunks) * PASTE_CHUNK_MS
         if a.get("enter"):
             subprocess.run(
                 ["tmux", "send-keys", "-t", tmux_sid, "Enter"],
                 check=True, capture_output=True,
             )
             time.sleep(0.1)
-            used_ms += 100
         if "sleep_ms" in a:
-            ms = int(a["sleep_ms"])
-            time.sleep(ms / 1000)
-            used_ms += ms
-    return used_ms
+            time.sleep(int(a["sleep_ms"]) / 1000)
 
 
-def _render_sessions_via_tmux(sessions, work_dir):
-    """Render all terminal sessions: one tmux session per id, N VHS clients per dim.
+def _setup_sessions(step_plans):
+    """Start one tmux session per unique session: <id> found in step_plans.
 
-    Commands run exactly once (safe for write-ops). Returns the same
-    {(sid, dims): (mp4_path, offset_map)} shape as the old per-dim-VHS loop
-    so Pass 3 (composite) is unchanged.
+    Returns {sid: (tmux_sid, font_map)} where font_map is {dims: font_size}.
+    Call _teardown_sessions() when rendering is complete (or on error).
     """
-    sess_dir = work_dir / "sessions"
-    sess_dir.mkdir(parents=True, exist_ok=True)
-    session_videos = {}
-
+    sessions = _collect_terminal_sessions(step_plans)
+    result = {}
     for sid, occurrences in sessions.items():
         unique_dims = _unique_session_dims(occurrences)
-        total_session_ms = sum(target_ms for _, _, _, _, target_ms in occurrences)
-        steps_str = ", ".join(str(o[0]) for o in occurrences)
-        dim_str = ", ".join(f"{w}x{h}" for (w, h) in unique_dims)
         rows, font_map = _compute_session_geometry(unique_dims)
-
-        print(f"\n=== Terminal session '{sid}' "
-              f"(steps {steps_str}, dims {dim_str}, tmux 80x{rows}) ===")
-
-        # Prefix avoids collisions with any existing user tmux sessions.
         tmux_sid = f"st_{sid}"
+        # LC_ALL=C avoids "cannot change locale" warnings from bash startup.
+        # /bin/bash keeps the demo shell predictable — no zsh/oh-my-zsh prompt
+        # redraws that would cause visual noise in recordings.
         subprocess.run(
-            ["tmux", "new-session", "-d", "-s", tmux_sid, "-x", "80", "-y", str(rows)],
+            ["tmux", "new-session", "-d", "-s", tmux_sid,
+             "-x", "80", "-y", str(rows), "-e", "LC_ALL=C", "/bin/bash"],
             check=True,
         )
         subprocess.run(
             ["tmux", "set-option", "-t", tmux_sid, "window-size", "manual"],
             check=True, capture_output=True,
         )
+        result[sid] = (tmux_sid, font_map)
+        dim_str = ", ".join(f"{w}x{h}" for (w, h) in unique_dims)
+        print(f"  session '{sid}' → tmux '{tmux_sid}' 80x{rows} ({dim_str})")
+    return result
 
-        # Spawn one VHS recorder per unique dim in parallel.
-        t_spawn = time.time()
-        vhs_procs = {}
-        mp4_paths = {}
-        for dims in unique_dims:
-            suffix = f"_{dims[0]}x{dims[1]}" if len(unique_dims) > 1 else ""
-            mp4_path = (sess_dir / f"{sid}{suffix}.mp4").resolve()
-            tape_path = sess_dir / f"{sid}{suffix}.tape"
-            tape_path.write_text(
-                _build_attach_tape(tmux_sid, dims, font_map[dims], total_session_ms, mp4_path)
-            )
-            proc = subprocess.Popen(["vhs", str(tape_path)])
-            vhs_procs[dims] = proc
-            mp4_paths[dims] = mp4_path
-            print(f"  spawned VHS {dims[0]}x{dims[1]} font={font_map[dims]}px → {mp4_path.name}")
 
-        # Wait for all clients to attach, then wait for VHS tapes to reach their
-        # recording phase (settle sleep finishes). Measure the pre-roll window
-        # from spawn to first keystroke; used below to offset slice boundaries.
-        _wait_for_tmux_clients(tmux_sid, len(unique_dims))
-        remaining_preroll = _SESSION_PREROLL_WAIT_S - (time.time() - t_spawn)
-        if remaining_preroll > 0:
-            time.sleep(remaining_preroll)
-        t_first_key = time.time()
-        actual_preroll_ms = int((t_first_key - t_spawn) * 1000)
-        print(f"  pre-roll {actual_preroll_ms}ms; driving {len(occurrences)} occurrence(s)...")
-
-        # Drive each step's actions in order.
-        scripted_offsets = []
-        cursor_ms = 0
-        for step_idx, _pane_idx, pane, _dims, target_ms in occurrences:
-            used_ms = _drive_actions_via_tmux(tmux_sid, pane.get("actions", []))
-            remaining = target_ms - used_ms
-            if remaining > 0:
-                time.sleep(remaining / 1000)
-            scripted_offsets.append((step_idx, cursor_ms, target_ms))
-            cursor_ms += target_ms
-
-        # Collect all VHS recorders (they finish their trailing Sleep naturally).
-        for dims, proc in vhs_procs.items():
-            proc.wait()
-            print(f"  VHS {dims[0]}x{dims[1]} finished")
-
+def _teardown_sessions(session_map):
+    """Kill all tmux sessions started by _setup_sessions."""
+    for _sid, (tmux_sid, _font_map) in session_map.items():
         subprocess.run(["tmux", "kill-session", "-t", tmux_sid], capture_output=True)
 
-        # Scale scripted offsets to actual MP4 time (wall-clock ≈ recording time,
-        # but minor encoding drift is corrected by the scale factor).
-        for dims in unique_dims:
-            mp4_path = mp4_paths[dims]
-            scripted_total_ms = actual_preroll_ms + total_session_ms + _SESSION_TRAILING_MS
-            actual_total_ms = _measure_video_duration_ms(mp4_path)
-            scale = actual_total_ms / scripted_total_ms
-            actual_offsets = {
-                step_idx: (
-                    int((actual_preroll_ms + start_ms) * scale),
-                    int(dur_ms * scale),
-                )
-                for step_idx, start_ms, dur_ms in scripted_offsets
-            }
-            print(f"  {dims[0]}x{dims[1]}: scripted={scripted_total_ms}ms "
-                  f"actual={actual_total_ms}ms scale={scale:.4f}")
-            session_videos[(sid, dims)] = (mp4_path, actual_offsets)
 
-    return session_videos
+def record_terminal_session_pane(pane, target_ms, dims, work_dir, key, tmux_sid, font_size):
+    """Record one step of a session terminal pane.
 
-
-def _measure_video_duration_ms(mp4_path):
-    """Read a video's actual duration in milliseconds via ffprobe."""
-    result = subprocess.run([
-        "ffprobe", "-v", "error", "-show_entries", "format=duration",
-        "-of", "default=nw=1:nk=1", str(mp4_path)
-    ], capture_output=True, text=True, check=True)
-    return int(float(result.stdout.strip()) * 1000)
-
-
-def _slice_session_video(session_mp4, start_ms, source_dur_ms, target_dur_ms, output_mp4):
-    """Extract source_dur_ms starting at start_ms; pad to target_dur_ms with the
-    frozen last frame if needed.
-
-    VHS often renders typing slightly faster than the 50 ms/char our estimator
-    assumes, so the actual session MP4 is shorter than the scripted total.
-    Caller passes scaled (start_ms, source_dur_ms) for the actual content slice;
-    target_dur_ms is the step's scripted duration. tpad freezes the last frame
-    to bridge any shortfall, keeping the slice's visible duration consistent
-    with the rest of the composite.
+    Attaches a fresh VHS client to the live tmux session, drives this step's
+    actions via send-keys while VHS records, then exits. The output MP4
+    contains exactly this step's content — no slicing required.
     """
-    output_mp4.parent.mkdir(parents=True, exist_ok=True)
-    pad_s = max(0, (target_dur_ms - source_dur_ms) / 1000)
-    cmd = [
-        "ffmpeg", "-y",
-        "-ss", f"{start_ms / 1000}",
-        "-t", f"{source_dur_ms / 1000}",
-        "-i", str(session_mp4),
-        "-c:v", "libx264", "-preset", "veryfast", "-crf", "22",
-        "-pix_fmt", "yuv420p", "-r", str(FPS),
-        "-an",
-    ]
-    if pad_s > 0.01:
-        cmd.extend(["-vf", f"tpad=stop_mode=clone:stop_duration={pad_s:.3f}"])
-    cmd.append(str(output_mp4))
-    subprocess.run(cmd, check=True, capture_output=True)
-    return output_mp4
+    work_dir.mkdir(parents=True, exist_ok=True)
+    out_path = (work_dir / f"{key}.mp4").resolve()
+    tape_path = work_dir / f"{key}.tape"
+    w, h = dims
+    tape = "\n".join([
+        f'Output "{out_path}"',
+        f"Set Width {w}",
+        f"Set Height {h}",
+        f"Set FontSize {font_size}",
+        "Set TypingSpeed 1ms",
+        'Set Theme "Dracula"',
+        "Set Padding 30",
+        "Hide",
+        f'Type "tmux attach -t {tmux_sid}"',
+        "Enter",
+        f"Sleep {_SESSION_SETTLE_MS}ms",
+        "Show",
+        f"Sleep {target_ms + _SESSION_STEP_BUFFER_MS}ms",
+    ]) + "\n"
+    tape_path.write_text(tape)
+
+    proc = subprocess.Popen(["vhs", str(tape_path)])
+    _wait_for_tmux_clients(tmux_sid, 1)
+    # Wait until Show fires (settle sleep completes) before driving actions.
+    time.sleep(_SESSION_PREROLL_WAIT_S)
+    _drive_actions_via_tmux(tmux_sid, pane.get("actions", []))
+    proc.wait()
+    # Brief pause so the tmux client fully detaches before the next step's
+    # VHS client attaches to the same session.
+    time.sleep(0.3)
+    return out_path
 
 
 # ---------- Composite ----------
@@ -820,7 +737,7 @@ def render(yaml_path, out=None, work_dir=None, voice_model=None, keep_work=False
     for i, step in enumerate(spec["steps"]):
         sid = step.get("id", f"step{i}")
         narration = step.get("narration", "")
-        pause_ms = int(step.get("pause_ms", 0))
+        end_buffer_ms = int(step.get("end_buffer_ms", step.get("pause_ms", 0)))
         panes = step.get("panes")
         if not panes or not (1 <= len(panes) <= 4):
             raise ValueError(f"step {sid}: must have 1-4 panes, got {len(panes) if panes else 0}")
@@ -846,7 +763,7 @@ def render(yaml_path, out=None, work_dir=None, voice_model=None, keep_work=False
                 estimates.append(estimate_terminal_ms(pane.get("actions", [])))
             else:
                 raise ValueError(f"step {sid}: unknown pane type {t!r}")
-        step_ms = max([narration_ms, *estimates]) + pause_ms
+        step_ms = max([narration_ms, *estimates]) + end_buffer_ms
 
         if not narration:
             silent_wav(narration_wav, step_ms)
@@ -860,49 +777,53 @@ def render(yaml_path, out=None, work_dir=None, voice_model=None, keep_work=False
         step_plans.append(plan)
         layout_str = f", {layout}" if layout else ""
         print(f"  [{i}] {sid} ({n} pane{'s' if n > 1 else ''}{layout_str}) "
-              f"narration={narration_ms}ms est={estimates} pause={pause_ms}ms → step={step_ms}ms")
+              f"narration={narration_ms}ms est={estimates} end_buffer={end_buffer_ms}ms → step={step_ms}ms")
 
-    # ---- Pass 2: render terminal sessions via tmux (run-once, multi-dim) ----
-    # One detached tmux session per session id; N VHS clients attach in parallel
-    # (one per unique render dim) while the orchestrator drives commands via
-    # send-keys. Commands execute exactly once — safe for write-ops.
-    sessions = _collect_terminal_sessions(step_plans)
-    session_videos = _render_sessions_via_tmux(sessions, work)
+    # ---- Pass 2: start tmux sessions for all session: <id> panes ----
+    print("\n=== Starting tmux sessions ===")
+    session_map = _setup_sessions(step_plans)
 
-    # ---- Pass 3: render browser panes, slice session videos, composite ----
+    # ---- Pass 3: record panes and composite, step by step ----
+    # Each step's panes are recorded in sequence; all pane recordings complete
+    # before the step is composited and we move to the next step.
     clip_paths = []
-    for plan in step_plans:
-        i, sid, n, layout = plan["idx"], plan["sid"], plan["n"], plan["layout"]
-        step_ms, panes, dims_list = plan["step_ms"], plan["panes"], plan["dims_list"]
-        narration_wav = plan["narration_wav"]
-        layout_str = f", {layout}" if layout else ""
-        print(f"\n=== [{i}] {sid} ({n} pane{'s' if n > 1 else ''}{layout_str}) ===")
+    try:
+        for plan in step_plans:
+            i, sid, n, layout = plan["idx"], plan["sid"], plan["n"], plan["layout"]
+            step_ms, panes, dims_list = plan["step_ms"], plan["panes"], plan["dims_list"]
+            narration_wav = plan["narration_wav"]
+            layout_str = f", {layout}" if layout else ""
+            print(f"\n=== [{i}] {sid} ({n} pane{'s' if n > 1 else ''}{layout_str}) ===")
 
-        pane_videos = []
-        for j, (pane, dims) in enumerate(zip(panes, dims_list)):
-            t = pane["type"]
-            if t == "browser":
-                v = record_browser_pane(pane, step_ms, dims,
-                                        work / "panes" / f"{i}-{j}-browser")
-                sess_label = f" session={pane.get('session', 'default')}"
-            elif t == "terminal" and "session" in pane:
-                sid_term = pane["session"]
-                session_mp4, offset_map = session_videos[(sid_term, dims)]
-                start_ms, source_dur_ms = offset_map[i]   # scaled to actual MP4 time
-                v = work / "panes" / f"{i}-{j}-term-slice.mp4"
-                _slice_session_video(session_mp4, start_ms, source_dur_ms, step_ms, v)
-                sess_label = f" session={sid_term} (sliced from {start_ms}ms, src={source_dur_ms}ms→pad to {step_ms}ms @ {dims[0]}x{dims[1]})"
-            else:
-                v = record_terminal_pane(pane, step_ms, dims,
-                                         work / "panes", f"{i}-{j}-term")
-                sess_label = ""
-            pane_videos.append(v)
-            print(f"  pane[{j}] {t}{sess_label} {dims} → {v.name}")
+            pane_videos = []
+            for j, (pane, dims) in enumerate(zip(panes, dims_list)):
+                t = pane["type"]
+                if t == "browser":
+                    v = record_browser_pane(pane, step_ms, dims,
+                                            work / "panes" / f"{i}-{j}-browser")
+                    sess_label = f" session={pane.get('session', 'default')}"
+                elif t == "terminal" and "session" in pane:
+                    sid_term = pane["session"]
+                    tmux_sid, font_map = session_map[sid_term]
+                    v = record_terminal_session_pane(
+                        pane, step_ms, dims,
+                        work / "panes", f"{i}-{j}-sess",
+                        tmux_sid, font_map[dims],
+                    )
+                    sess_label = f" session={sid_term} @ {dims[0]}x{dims[1]}"
+                else:
+                    v = record_terminal_pane(pane, step_ms, dims,
+                                             work / "panes", f"{i}-{j}-term")
+                    sess_label = ""
+                pane_videos.append(v)
+                print(f"  pane[{j}] {t}{sess_label} {dims} → {v.name}")
 
-        clip_path = work / "clips" / f"{i}.mp4"
-        composite_step(pane_videos, narration_wav, clip_path, step_ms, n, layout,
-                       output_w, output_h)
-        clip_paths.append(clip_path)
+            clip_path = work / "clips" / f"{i}.mp4"
+            composite_step(pane_videos, narration_wav, clip_path, step_ms, n, layout,
+                           output_w, output_h)
+            clip_paths.append(clip_path)
+    finally:
+        _teardown_sessions(session_map)
 
     print(f"\n=== Concatenating {len(clip_paths)} clips → {out_path} ===")
     concat_clips(clip_paths, out_path, work)
