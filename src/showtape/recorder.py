@@ -476,6 +476,12 @@ def record_terminal_pane(pane, target_ms, dims, work_dir, key):
 # Commands run once (safe for write-ops); different steps can use different
 # viewport dims for the same session.
 #
+# Font size used for all session terminal recordings — same as the default
+# in _tape_header so session panes look visually consistent with plain
+# terminal panes. Larger viewport dims show the same content with empty
+# space to the right/bottom rather than scaling up the font.
+_SESSION_FONT_SIZE = 28
+
 # Monospace char width / line-height ratios for font → grid-size math.
 # Calibrated for JetBrains Mono (VHS default); ≤5% error at typical sizes.
 _CHAR_WIDTH_RATIO = 0.60
@@ -518,23 +524,22 @@ def _unique_session_dims(occurrences):
     return seen
 
 
-def _compute_session_geometry(unique_dims, cols=80, padding=30):
-    """Return (rows, {dims: font_size}) for a tmux session shared across dims.
+def _compute_session_geometry(unique_dims, padding=30):
+    """Return (cols, rows) for the tmux session using the fixed session font.
 
-    Font is sized so `cols` columns fill the post-padding viewport width.
-    Session rows = smallest natural row count across all dims so every client
-    displays the full grid without clipping.
+    Uses the natural terminal grid for the smallest dim across all the
+    session's appearances. Larger viewport dims show the same content with
+    empty space to the right/bottom — consistent visual size across steps.
     """
-    font_map = {}
-    all_rows = []
+    min_cols, min_rows = 10000, 10000
     for (w, h) in unique_dims:
         inner_w = max(1, w - 2 * padding)
         inner_h = max(1, h - 2 * padding)
-        font = max(8, round(inner_w / (cols * _CHAR_WIDTH_RATIO)))
-        rows = max(4, int(inner_h / (font * _LINE_HEIGHT_RATIO)))
-        font_map[(w, h)] = font
-        all_rows.append(rows)
-    return min(all_rows), font_map
+        cols = max(40, int(inner_w / (_SESSION_FONT_SIZE * _CHAR_WIDTH_RATIO)))
+        rows = max(8, int(inner_h / (_SESSION_FONT_SIZE * _LINE_HEIGHT_RATIO)))
+        min_cols = min(min_cols, cols)
+        min_rows = min(min_rows, rows)
+    return min_cols, min_rows
 
 
 def _wait_for_tmux_clients(tmux_sid, n, timeout_s=20.0):
@@ -603,33 +608,33 @@ def _setup_sessions(step_plans):
     result = {}
     for sid, occurrences in sessions.items():
         unique_dims = _unique_session_dims(occurrences)
-        rows, font_map = _compute_session_geometry(unique_dims)
+        cols, rows = _compute_session_geometry(unique_dims)
         tmux_sid = f"st_{sid}"
         # LC_ALL=C avoids "cannot change locale" warnings from bash startup.
         # /bin/bash keeps the demo shell predictable — no zsh/oh-my-zsh prompt
         # redraws that would cause visual noise in recordings.
         subprocess.run(
             ["tmux", "new-session", "-d", "-s", tmux_sid,
-             "-x", "80", "-y", str(rows), "-e", "LC_ALL=C", "/bin/bash"],
+             "-x", str(cols), "-y", str(rows), "-e", "LC_ALL=C", "/bin/bash"],
             check=True,
         )
         subprocess.run(
             ["tmux", "set-option", "-t", tmux_sid, "window-size", "manual"],
             check=True, capture_output=True,
         )
-        result[sid] = (tmux_sid, font_map)
+        result[sid] = tmux_sid
         dim_str = ", ".join(f"{w}x{h}" for (w, h) in unique_dims)
-        print(f"  session '{sid}' → tmux '{tmux_sid}' 80x{rows} ({dim_str})")
+        print(f"  session '{sid}' → tmux '{tmux_sid}' {cols}x{rows} font={_SESSION_FONT_SIZE}px ({dim_str})")
     return result
 
 
 def _teardown_sessions(session_map):
     """Kill all tmux sessions started by _setup_sessions."""
-    for _sid, (tmux_sid, _font_map) in session_map.items():
+    for _sid, tmux_sid in session_map.items():
         subprocess.run(["tmux", "kill-session", "-t", tmux_sid], capture_output=True)
 
 
-def record_terminal_session_pane(pane, target_ms, dims, work_dir, key, tmux_sid, font_size):
+def record_terminal_session_pane(pane, target_ms, dims, work_dir, key, tmux_sid):
     """Record one step of a session terminal pane.
 
     Attaches a fresh VHS client to the live tmux session, drives this step's
@@ -644,7 +649,7 @@ def record_terminal_session_pane(pane, target_ms, dims, work_dir, key, tmux_sid,
         f'Output "{out_path}"',
         f"Set Width {w}",
         f"Set Height {h}",
-        f"Set FontSize {font_size}",
+        f"Set FontSize {_SESSION_FONT_SIZE}",
         "Set TypingSpeed 1ms",
         'Set Theme "Dracula"',
         "Set Padding 30",
@@ -804,11 +809,11 @@ def render(yaml_path, out=None, work_dir=None, voice_model=None, keep_work=False
                     sess_label = f" session={pane.get('session', 'default')}"
                 elif t == "terminal" and "session" in pane:
                     sid_term = pane["session"]
-                    tmux_sid, font_map = session_map[sid_term]
+                    tmux_sid = session_map[sid_term]
                     v = record_terminal_session_pane(
                         pane, step_ms, dims,
                         work / "panes", f"{i}-{j}-sess",
-                        tmux_sid, font_map[dims],
+                        tmux_sid,
                     )
                     sess_label = f" session={sid_term} @ {dims[0]}x{dims[1]}"
                 else:
