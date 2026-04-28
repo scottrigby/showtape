@@ -928,9 +928,12 @@ def render(yaml_path, out=None, work_dir=None, voice_model=None, keep_work=False
         narration = step.get("narration", "") if record else ""
         end_buffer_ms = int(step.get("end_buffer_ms", step.get("pause_ms", 0)))
         browser_warmup_ms = int(step.get("browser_warmup_ms", 0))
-        panes = step.get("panes")
-        if not panes or not (1 <= len(panes) <= 4):
-            raise ValueError(f"step {sid}: must have 1-4 panes, got {len(panes) if panes else 0}")
+        wait_ms = int(step.get("wait_ms", 0))  # pure Python sleep for record: false steps
+        panes = step.get("panes") or []
+        if record and not (1 <= len(panes) <= 4):
+            raise ValueError(f"step {sid}: must have 1-4 panes, got {len(panes)}")
+        if not record and len(panes) > 4:
+            raise ValueError(f"step {sid}: too many panes ({len(panes)})")
         n = len(panes)
         layout = step.get("layout", "3-left" if n == 3 else None)
         if n == 3 and layout not in LAYOUTS_3:
@@ -953,7 +956,7 @@ def render(yaml_path, out=None, work_dir=None, voice_model=None, keep_work=False
                 estimates.append(estimate_terminal_ms(pane.get("actions", [])))
             else:
                 raise ValueError(f"step {sid}: unknown pane type {t!r}")
-        step_ms = max([narration_ms, *estimates]) + end_buffer_ms
+        step_ms = max([narration_ms, *estimates, 0]) + end_buffer_ms
 
         if not narration:
             silent_wav(narration_wav, step_ms)
@@ -965,6 +968,7 @@ def render(yaml_path, out=None, work_dir=None, voice_model=None, keep_work=False
             "narration_wav": narration_wav, "dims_list": dims_list,
             "record": record,
             "browser_warmup_ms": browser_warmup_ms,
+            "wait_ms": wait_ms,
         }
         step_plans.append(plan)
         layout_str = f", {layout}" if layout else ""
@@ -987,6 +991,7 @@ def render(yaml_path, out=None, work_dir=None, voice_model=None, keep_work=False
             narration_wav = plan["narration_wav"]
             record = plan["record"]
             browser_warmup_ms = plan["browser_warmup_ms"]
+            wait_ms = plan["wait_ms"]
             layout_str = f", {layout}" if layout else ""
             rec_flag = "" if record else " [record: false]"
             print(f"\n=== [{i}] {sid} ({n} pane{'s' if n > 1 else ''}{layout_str}){rec_flag} ===")
@@ -995,6 +1000,10 @@ def render(yaml_path, out=None, work_dir=None, voice_model=None, keep_work=False
                 # Advance state without recording — runs actions, updates sessions,
                 # but produces no clip. Useful for write-ops (helm upgrade, kubectl
                 # apply) or waits (kubectl wait) that shouldn't appear in the output.
+                # wait_ms: pure Python sleep — simplest way to let background shell
+                # commands finish without needing a dummy pane.
+                if wait_ms:
+                    time.sleep(wait_ms / 1000)
                 for j, (pane, dims) in enumerate(zip(panes, dims_list)):
                     t = pane["type"]
                     if t == "browser":
