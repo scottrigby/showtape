@@ -2,58 +2,47 @@ title: record-false-demo
 resolution: { w: 1920, h: 1080 }
 speaker: 0
 
-# Demonstrates record: false — steps that run actions but never appear
-# in the output video.
+# Demonstrates record: false with wait_ms — a pure invisible pause.
 #
-# Story: a countdown runs, then the recording pauses invisibly for several
-# seconds, then resumes. The stopwatch in the browser shows the real elapsed
-# time, making it obvious more time passed than the visible recording shows.
-#
-# record: false with wait_ms and no panes is the simplest form:
-#   - record: false
-#     wait_ms: 5000   ← Python sleeps this long; no panes required
-
-pronunciations:
-  vclock: "v clock"
+# Story: a countdown runs visibly (1-3), then the recording pauses for
+# 10 seconds without showing anything. When it resumes, time.is shows the
+# real wall-clock time, making it obvious more time passed than the visible
+# footage suggests.
 
 steps:
   - id: start-countdown
-    narration: "A countdown starts. We will pause the recording between steps."
-    end_buffer_ms: 500
+    narration: "A countdown starts. The recording will pause invisibly between steps — watch the clock."
+    end_buffer_ms: 1000
     browser_warmup_ms: 1500
     panes:
       - type: browser
-        session: stopwatch
+        session: clock
         actions:
-          - goto: "https://vclock.com/stopwatch/"
-          - click: "text=Start"
-          - sleep_ms: 500
+          - goto: "https://time.is/"
       - type: terminal
         session: shell
         actions:
           - type: "echo 'Starting countdown, will pause in-between'"
           - enter: true
           - sleep_ms: 500
-          - type: "for i in {1..3}; do printf 'tick %d  ' $i; sleep 1; done && echo"
+          - paste: "for i in {1..3}; do printf 'tick %d  ' $i; sleep 1; done && echo done"
           - enter: true
-          - sleep_ms: 4000   # wait for loop to finish (3 x 1s + margin)
+          - sleep_ms: 4000   # wait for the 3-second loop to finish
 
   - id: pause
     record: false
-    wait_ms: 5000        # 5-second invisible pause — no panes required
-                         # the shell session is idle, the stopwatch keeps running
+    wait_ms: 10000    # 10-second invisible pause — no panes needed
 
   - id: resume
-    narration: "Recording resumes. The stopwatch shows more time passed than the countdown suggests."
-    end_buffer_ms: 1500
+    narration: "Recording resumes. Check the clock — ten seconds just passed invisibly."
+    end_buffer_ms: 2000
     panes:
       - type: browser
-        session: stopwatch    # same session — stopwatch still running where we left it
+        session: clock
         actions:
-          - click: "text=Stop"
-          - sleep_ms: 500
+          - goto: "https://time.is/"   # same page, new time shown
       - type: terminal
         session: shell
         actions:
-          - type: "echo 'Back — 5 invisible seconds just passed'"
+          - type: "echo 'Back — 10 invisible seconds just elapsed'"
           - enter: true
