@@ -71,7 +71,7 @@ PY
 
 echo
 echo "Sanity check — every pinned mention now reads $NEW:"
-"$ROOT/scripts/check-version-sync.sh" "$NEW" || {
+bash "$ROOT/scripts/check-version-sync.sh" "$NEW" || {
   echo "error: bump produced inconsistent state — investigate manually" >&2
   exit 1
 }
